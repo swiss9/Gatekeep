@@ -1,0 +1,64 @@
+import Fastify, { type FastifyInstance } from 'fastify';
+import cors from '@fastify/cors';
+import { ZodError } from 'zod';
+import { env } from './env.js';
+import { HttpError } from './middleware/auth.js';
+import { authRoutes } from './routes/auth.js';
+import { storeRoutes } from './routes/store.js';
+import { productRoutes } from './routes/products.js';
+import { categoryRoutes } from './routes/categories.js';
+import { orderRoutes } from './routes/orders.js';
+import { adminRoutes } from './routes/admin.js';
+import { teamRoutes } from './routes/team.js';
+
+async function build(): Promise<FastifyInstance> {
+  const app = Fastify({
+    logger: { level: env.NODE_ENV === 'production' ? 'info' : 'debug' },
+    trustProxy: true,
+  });
+
+  await app.register(cors, {
+    // In production we lock CORS to the exact Vercel URL set in env.
+    // In development we allow everything so `bun dev` works from any host.
+    origin: env.NODE_ENV === 'production' ? env.CLIENT_ORIGIN : true,
+    credentials: true,
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  });
+
+  // ---- Error mapping ----
+  app.setErrorHandler((err, _req, reply) => {
+    if (err instanceof ZodError) {
+      return reply.code(400).send({
+        error: 'Validation failed',
+        issues: err.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      });
+    }
+    if (err instanceof HttpError) {
+      return reply.code(err.status).send({ error: err.message });
+    }
+    app.log.error(err);
+    return reply.code(500).send({ error: 'Internal server error' });
+  });
+
+  app.get('/health', async () => ({ ok: true, ts: Date.now() }));
+
+  await app.register(authRoutes);
+  await app.register(storeRoutes);
+  await app.register(productRoutes);
+  await app.register(categoryRoutes);
+  await app.register(orderRoutes);
+  await app.register(adminRoutes);
+  await app.register(teamRoutes);
+
+  return app;
+}
+
+const app = await build();
+
+try {
+  await app.listen({ port: env.PORT, host: '0.0.0.0' });
+  app.log.info(`Gatekeep Shop server listening on :${env.PORT}`);
+} catch (err) {
+  app.log.error(err);
+  process.exit(1);
+}
