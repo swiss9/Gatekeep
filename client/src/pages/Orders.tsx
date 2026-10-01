@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api, formatMoney, type Order, type OrderItem, type OrderStatus, type StoreSettings } from '../lib/api';
-import { PastelThumb } from '../components/PastelThumb';
+import {
+  api,
+  formatMoney,
+  type Order,
+  type OrderItem,
+  type OrderStatus,
+  type StoreSettings,
+} from '../lib/api';
 
 const STATUS_CLASS: Record<OrderStatus, string> = {
   Delivered: 'mint',
@@ -39,13 +45,18 @@ export function Orders() {
 
   const filtered = useMemo(() => {
     if (state.kind !== 'ready') return [];
-    if (filter === 'Active') return state.orders.filter((o) => o.status !== 'Delivered' && o.status !== 'Cancelled');
+    if (filter === 'Active')
+      return state.orders.filter((o) => o.status !== 'Delivered' && o.status !== 'Cancelled');
     if (filter === 'Delivered') return state.orders.filter((o) => o.status === 'Delivered');
     return state.orders;
   }, [state, filter]);
 
   if (state.kind === 'loading')
-    return <div className="screen active"><div className="center-state">Loading…</div></div>;
+    return (
+      <div className="screen active">
+        <div className="center-state">Loading…</div>
+      </div>
+    );
   if (state.kind === 'error')
     return (
       <div className="screen active">
@@ -61,7 +72,9 @@ export function Orders() {
     itemsByOrder.set(it.order_id, arr);
   });
 
-  const activeCount = state.orders.filter((o) => o.status !== 'Delivered' && o.status !== 'Cancelled').length;
+  const activeCount = state.orders.filter(
+    (o) => o.status !== 'Delivered' && o.status !== 'Cancelled',
+  ).length;
 
   return (
     <section className="screen active">
