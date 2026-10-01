@@ -5,25 +5,17 @@ import { ProductCreateSchema, ProductUpdateSchema } from '../schemas.js';
 import type { Product } from '../types.js';
 
 export const productRoutes: FastifyPluginAsync = async (app) => {
-  // ---- Public list ----
-  // Clients typically load this once and filter locally, but we support
-  // ?category_id= and ?q= for larger catalogues.
   app.get('/api/products', async (req, reply) => {
     const q = req.query as { category_id?: string; q?: string; all?: string };
     let query = supabaseAdmin.from('products').select('*');
 
-    // Only admins may see inactive products.
     let isAdmin = false;
     const header = req.headers.authorization;
     if (header?.startsWith('Bearer ') && q.all === '1') {
       try {
-        await requireRole('admin', 'superadmin')(req, reply);
+        await requireRole('admin', 'superadmin')(req, reply, () => undefined);
         isAdmin = true;
       } catch (err) {
-        // Only swallow "authenticated but not an admin" — the caller
-        // still gets the public list. Anything else (malformed JWT,
-        // missing profile, DB failure) is a real error and must bubble
-        // up to the error handler rather than silently degrading.
         if (!(err instanceof HttpError) || err.status !== 403) {
           throw err;
         }
@@ -51,7 +43,6 @@ export const productRoutes: FastifyPluginAsync = async (app) => {
     return reply.send({ product: data as Product });
   });
 
-  // ---- Admin ----
   app.post(
     '/api/admin/products',
     { preHandler: requireRole('admin', 'superadmin') },
@@ -100,15 +91,12 @@ export const productRoutes: FastifyPluginAsync = async (app) => {
       const actor = currentProfile(req);
       const { id } = req.params as { id: string };
 
-      // Soft-delete is safer: order_items reference products for history,
-      // and a hard delete would orphan them. We deactivate instead.
       const { error } = await supabaseAdmin
         .from('products')
         .update({ active: false, updated_at: new Date().toISOString() })
         .eq('id', id);
       if (error) throw new HttpError(500, error.message);
 
-      // eslint-disable-next-line no-console
       console.log(`[admin] product ${id} deactivated by ${actor.id} (${actor.role})`);
       return reply.send({ ok: true });
     },
