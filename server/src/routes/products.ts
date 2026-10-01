@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { supabaseAdmin } from '../supabase.js';
 import { HttpError, authenticate, requireRole, currentProfile } from '../middleware/auth.js';
 import { ProductCreateSchema, ProductUpdateSchema } from '../schemas.js';
+import { broadcastNewProduct } from '../bot.js';
 import type { Product } from '../types.js';
 
 export const productRoutes: FastifyPluginAsync = async (app) => {
@@ -64,6 +65,15 @@ export const productRoutes: FastifyPluginAsync = async (app) => {
         .select()
         .single();
       if (error || !data) throw new HttpError(500, error?.message ?? 'insert failed');
+
+      // Fire-and-forget broadcast. Do not await — the admin's request
+      // should return as soon as the product is saved, not after every
+      // Telegram message is delivered.
+      void broadcastNewProduct({
+        name: data.name,
+        price: Number(data.price),
+      });
+
       return reply.code(201).send({ product: data as Product });
     },
   );
@@ -98,7 +108,6 @@ export const productRoutes: FastifyPluginAsync = async (app) => {
         .eq('id', id);
       if (error) throw new HttpError(500, error.message);
 
-      // eslint-disable-next-line no-console
       console.log(`[admin] product ${id} deactivated by ${actor.id} (${actor.role})`);
       return reply.send({ ok: true });
     },
