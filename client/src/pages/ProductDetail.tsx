@@ -54,8 +54,10 @@ export function ProductDetail({ id }: Props) {
 
   const { product, store } = state;
   const currency = store.currency_symbol;
-  const inStock = product.stock > 0;
-  const maxQty = Math.min(product.stock, 9);
+  const isDigital = product.delivery_type === 'digital';
+  const isNone = product.delivery_type === 'none';
+  const inStock = isNone || product.stock > 0;
+  const maxQty = isNone ? 99 : Math.min(product.stock, 9);
   const saved = wishlist.has(product.id);
 
   return (
@@ -101,41 +103,49 @@ export function ProductDetail({ id }: Props) {
         <span className="muted">
           {!inStock
             ? 'Out of stock'
-            : product.stock <= 10
-              ? `Only ${product.stock} left in stock`
-              : 'In stock · ships within 24h'}
+            : isDigital
+              ? 'Instant download after purchase'
+              : isNone
+                ? 'Available for order'
+                : product.stock <= 10
+                  ? `Only ${product.stock} left in stock`
+                  : 'In stock · ships within 24h'}
         </span>
       </div>
 
-      <div className="qty-row">
-        <span className="section-title">Quantity</span>
-        <QuantityStepper value={qty} min={1} max={Math.max(1, maxQty)} onChange={setQty} />
-      </div>
+      {!isNone && (
+        <div className="qty-row">
+          <span className="section-title">Quantity</span>
+          <QuantityStepper value={qty} min={1} max={Math.max(1, maxQty)} onChange={setQty} />
+        </div>
+      )}
 
-      <div className="perks">
-        <div className="perk">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M3 7h11v10H3zM14 10h4l3 3v4h-7z" />
-            <circle cx="7" cy="17.5" r="1.8" />
-            <circle cx="17.5" cy="17.5" r="1.8" />
-          </svg>
-          Free shipping over {formatMoney(store.shipping_threshold, currency)}
+      {store.perks_enabled && !isDigital && (
+        <div className="perks">
+          <div className="perk">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 7h11v10H3zM14 10h4l3 3v4h-7z" />
+              <circle cx="7" cy="17.5" r="1.8" />
+              <circle cx="17.5" cy="17.5" r="1.8" />
+            </svg>
+            {store.perk_1_text}
+          </div>
+          <div className="perk">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 9a8 8 0 0 1 14.9-2M20 15a8 8 0 0 1-14.9 2" />
+              <path d="M18.5 3.5V7H15M5.5 20.5V17H9" />
+            </svg>
+            {store.perk_2_text}
+          </div>
+          <div className="perk">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 3 4.5 6v5c0 4.6 3.2 8.2 7.5 10 4.3-1.8 7.5-5.4 7.5-10V6L12 3z" />
+              <path d="m9 11.5 2.2 2.2L15.5 9" />
+            </svg>
+            {store.perk_3_text}
+          </div>
         </div>
-        <div className="perk">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M4 9a8 8 0 0 1 14.9-2M20 15a8 8 0 0 1-14.9 2" />
-            <path d="M18.5 3.5V7H15M5.5 20.5V17H9" />
-          </svg>
-          30-day easy returns
-        </div>
-        <div className="perk">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 3 4.5 6v5c0 4.6 3.2 8.2 7.5 10 4.3-1.8 7.5-5.4 7.5-10V6L12 3z" />
-            <path d="m9 11.5 2.2 2.2L15.5 9" />
-          </svg>
-          Secure checkout
-        </div>
-      </div>
+      )}
 
       <div className="ctabar">
         <button
@@ -145,11 +155,15 @@ export function ProductDetail({ id }: Props) {
           onClick={() => {
             if (!inStock) return;
             haptic('medium');
-            replace(product, Math.min(qty, product.stock));
+            replace(product, isNone ? 1 : Math.min(qty, product.stock || 1));
             navigate({ name: 'checkout' });
           }}
         >
-          {inStock ? `Buy Now · ${formatMoney(product.price * qty, currency)}` : 'Out of stock'}
+          {inStock
+            ? isDigital
+              ? `Buy Now · ${formatMoney(product.price, currency)}`
+              : `Buy Now · ${formatMoney(product.price * qty, currency)}`
+            : 'Out of stock'}
         </button>
       </div>
     </section>
