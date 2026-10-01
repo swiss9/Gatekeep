@@ -15,9 +15,7 @@ export const productRoutes: FastifyPluginAsync = async (app) => {
     if (header?.startsWith('Bearer ') && q.all === '1') {
       try {
         const profile = await authenticate(req);
-        if (profile.role === 'admin' || profile.role === 'superadmin') {
-          isAdmin = true;
-        }
+        if (profile.role === 'admin' || profile.role === 'superadmin') isAdmin = true;
       } catch (err) {
         if (!(err instanceof HttpError)) throw err;
         if (err.status !== 401 && err.status !== 403) throw err;
@@ -61,18 +59,14 @@ export const productRoutes: FastifyPluginAsync = async (app) => {
           pastel_color: body.pastel_color,
           stock: body.stock,
           active: body.active,
+          delivery_type: body.delivery_type,
+          digital_file_path: body.digital_file_path ?? null,
         })
         .select()
         .single();
       if (error || !data) throw new HttpError(500, error?.message ?? 'insert failed');
 
-      // Fire-and-forget broadcast. Do not await — the admin's request
-      // should return as soon as the product is saved, not after every
-      // Telegram message is delivered.
-      void broadcastNewProduct({
-        name: data.name,
-        price: Number(data.price),
-      });
+      void broadcastNewProduct({ name: data.name, price: Number(data.price) });
 
       return reply.code(201).send({ product: data as Product });
     },
