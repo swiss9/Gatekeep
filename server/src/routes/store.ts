@@ -17,6 +17,13 @@ const FALLBACK: StoreSettings = {
   banner_cta: 'Shop all',
   banner_cta_action: 'all',
   banner_color: 'mint',
+  payment_provider: 'none',
+  payment_url: '',
+  payment_ton_address: '',
+  perks_enabled: true,
+  perk_1_text: 'Free shipping over $60',
+  perk_2_text: '30-day easy returns',
+  perk_3_text: 'Secure checkout',
   updated_at: new Date(0).toISOString(),
 };
 
