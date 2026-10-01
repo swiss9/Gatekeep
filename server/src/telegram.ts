@@ -16,18 +16,6 @@ export type InitData = {
   authDate: number;
 };
 
-/**
- * Telegram Mini App initData validation.
- *
- * Algorithm (per Telegram docs):
- *   1. Sort all key=value pairs except `hash` alphabetically, join with \n.
- *   2. secret = HMAC_SHA256(key = "WebAppData", data = bot_token)
- *   3. expected = HMAC_SHA256(key = secret, data = data_check_string)
- *   4. Compare `expected` (hex) with the provided `hash`, constant-time.
- *
- * We also reject initData older than 24h — a stolen URL cannot be
- * replayed forever.
- */
 const MAX_AGE_SECONDS = 60 * 60 * 24;
 
 export function validateInitData(initData: string): InitData {
@@ -37,7 +25,6 @@ export function validateInitData(initData: string): InitData {
   if (!hash) throw new Error('initData: missing hash');
 
   params.delete('hash');
-  // Also drop signature (Ed25519) — not used, Telegram omits it for web apps.
   params.delete('signature');
 
   const dataCheckString = [...params.entries()]
@@ -52,6 +39,27 @@ export function validateInitData(initData: string): InitData {
   const expectedHex = createHmac('sha256', secretKey)
     .update(dataCheckString)
     .digest('hex');
+
+  // ---- DIAGNOSTIC LOGS (remove after debugging) ----
+  // eslint-disable-next-line no-console
+  console.log('=== telegram initData debug ===');
+  // eslint-disable-next-line no-console
+  console.log('token_len:', env.TELEGRAM_BOT_TOKEN.length);
+  // eslint-disable-next-line no-console
+  console.log('token_prefix:', env.TELEGRAM_BOT_TOKEN.slice(0, 12));
+  // eslint-disable-next-line no-console
+  console.log('token_suffix:', env.TELEGRAM_BOT_TOKEN.slice(-6));
+  // eslint-disable-next-line no-console
+  console.log('hash_received:', hash.slice(0, 12));
+  // eslint-disable-next-line no-console
+  console.log('hash_expected:', expectedHex.slice(0, 12));
+  // eslint-disable-next-line no-console
+  console.log('data_check_len:', dataCheckString.length);
+  // eslint-disable-next-line no-console
+  console.log('data_check_keys:', [...params.keys()].sort().join(','));
+  // eslint-disable-next-line no-console
+  console.log('===============================');
+  // --------------------------------------------------
 
   const a = Buffer.from(expectedHex, 'hex');
   const b = Buffer.from(hash, 'hex');
