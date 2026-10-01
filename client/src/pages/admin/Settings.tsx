@@ -5,21 +5,6 @@ import { Banner } from '../../components/Banner';
 
 type Draft = Omit<StoreSettings, 'id' | 'updated_at'>;
 
-const emptyDraft: Draft = {
-  store_name: '',
-  store_tagline: '',
-  currency_symbol: '$',
-  shipping_threshold: 60,
-  shipping_cost: 6,
-  banner_enabled: true,
-  banner_eyebrow: '',
-  banner_title: '',
-  banner_subtitle: '',
-  banner_cta: '',
-  banner_cta_action: 'all',
-  banner_color: 'mint',
-};
-
 export function Settings() {
   const toast = useToast();
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -40,7 +25,11 @@ export function Settings() {
 
   if (!draft) return <p className="muted" style={{ marginTop: 16 }}>Loading…</p>;
 
-  const save = async (keys: (keyof Draft)[], setBusy: (b: boolean) => void, okMsg: string) => {
+  const save = async (
+    keys: (keyof Draft)[],
+    setBusy: (b: boolean) => void,
+    okMsg: string,
+  ) => {
     setBusy(true);
     try {
       const patch: Partial<Draft> = {};
@@ -99,7 +88,9 @@ export function Settings() {
               min="0"
               step="1"
               value={draft.shipping_threshold}
-              onChange={(e) => setDraft({ ...draft, shipping_threshold: Number(e.target.value) })}
+              onChange={(e) =>
+                setDraft({ ...draft, shipping_threshold: Number(e.target.value) })
+              }
             />
           </div>
           <div className="field">
@@ -119,7 +110,13 @@ export function Settings() {
           disabled={savingStore}
           onClick={() =>
             save(
-              ['store_name', 'store_tagline', 'currency_symbol', 'shipping_threshold', 'shipping_cost'],
+              [
+                'store_name',
+                'store_tagline',
+                'currency_symbol',
+                'shipping_threshold',
+                'shipping_cost',
+              ],
               setSavingStore,
               'Store saved',
             )
@@ -133,7 +130,10 @@ export function Settings() {
         Home banner
       </span>
       <div className="panel">
-        <div className="field" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div
+          className="field"
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+        >
           <label style={{ marginBottom: 0 }}>Show banner</label>
           <label className="switch">
             <input
@@ -182,7 +182,10 @@ export function Settings() {
           <select
             value={draft.banner_cta_action}
             onChange={(e) =>
-              setDraft({ ...draft, banner_cta_action: e.target.value as Draft['banner_cta_action'] })
+              setDraft({
+                ...draft,
+                banner_cta_action: e.target.value as Draft['banner_cta_action'],
+              })
             }
           >
             <option value="all">Show all products</option>
@@ -195,7 +198,15 @@ export function Settings() {
           <div className="swatches">
             {(['mint', 'blue', 'pink', 'yellow', 'neutral'] as const).map((c) => {
               const bg =
-                c === 'mint' ? '#D1FAE5' : c === 'blue' ? '#E0F2FE' : c === 'pink' ? '#FCE7F3' : c === 'yellow' ? '#FEF3C7' : '#EEEFF1';
+                c === 'mint'
+                  ? '#D1FAE5'
+                  : c === 'blue'
+                    ? '#E0F2FE'
+                    : c === 'pink'
+                      ? '#FCE7F3'
+                      : c === 'yellow'
+                        ? '#FEF3C7'
+                        : '#EEEFF1';
               return (
                 <label
                   key={c}
