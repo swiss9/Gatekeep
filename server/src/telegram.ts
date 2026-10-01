@@ -29,7 +29,6 @@ export function validateInitData(initData: string): InitData {
   if (!hash) throw new Error('initData: missing hash');
 
   params.delete('hash');
-  params.delete('signature');
 
   const dataCheckString = [...params.entries()]
     .map(([k, v]) => `${k}=${v}`)
