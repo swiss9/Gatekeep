@@ -1,10 +1,5 @@
 import { z } from 'zod';
 
-/**
- * All environment variables are validated at process start.
- * If anything is missing or malformed, the process exits with a
- * readable error before it ever accepts a request.
- */
 const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8080),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -18,6 +13,7 @@ const EnvSchema = z.object({
   ADMIN_TELEGRAM_ID: z.coerce.number().int().positive(),
 
   CLIENT_ORIGIN: z.string().url(),
+  MINI_APP_URL: z.string().url(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
@@ -28,7 +24,6 @@ function load(): Env {
     const issues = parsed.error.issues
       .map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`)
       .join('\n');
-    // eslint-disable-next-line no-console
     console.error(`\n[env] Missing or invalid environment variables:\n${issues}\n`);
     process.exit(1);
   }
@@ -36,5 +31,3 @@ function load(): Env {
 }
 
 export const env: Env = load();
-console.log(`[env] TELEGRAM_BOT_TOKEN prefix: ${env.TELEGRAM_BOT_TOKEN.slice(0, 12)}`);
-console.log(`[env] ADMIN_TELEGRAM_ID: ${env.ADMIN_TELEGRAM_ID}`);
