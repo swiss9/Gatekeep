@@ -8,7 +8,8 @@ let running = false;
 
 type InlineKeyboardButton = {
   text: string;
-  web_app: { url: string };
+  web_app?: { url: string };
+  url?: string;
 };
 
 type ReplyMarkup = {
@@ -48,30 +49,41 @@ function webAppButton(label: string): ReplyMarkup {
   };
 }
 
-async function loadStoreName(): Promise<string> {
+function urlButton(label: string, url: string): ReplyMarkup {
+  return {
+    reply_markup: {
+      inline_keyboard: [[{ text: label, url }]],
+    },
+  };
+}
+
+async function loadSettings(): Promise<{
+  store_name: string;
+  currency_symbol: string;
+}> {
   const { data } = await supabaseAdmin
     .from('store_settings')
-    .select('store_name')
+    .select('store_name, currency_symbol')
     .eq('id', 1)
     .maybeSingle();
-  return data?.store_name ?? 'our store';
+  return {
+    store_name: data?.store_name ?? 'the store',
+    currency_symbol: data?.currency_symbol ?? '$',
+  };
 }
 
 async function handleStart(chatId: number): Promise<void> {
-  const name = await loadStoreName();
+  const { store_name } = await loadSettings();
   await sendMessage(
     chatId,
-    `Welcome to <b>${name}</b>!\n\nTap the button below to browse the catalog.`,
+    `Welcome to <b>${store_name}</b>!\n\nTap the button below to browse the catalog.`,
     webAppButton('Open Shop'),
   );
 }
 
 async function handleUpdate(update: {
   update_id: number;
-  message?: {
-    chat: { id: number };
-    text?: string;
-  };
+  message?: { chat: { id: number }; text?: string };
 }): Promise<void> {
   const text = update.message?.text;
   if (text?.startsWith('/start')) {
@@ -118,29 +130,87 @@ export function stopBot(): void {
   running = false;
 }
 
-/**
- * Broadcast a new product to customers who have placed at least one order.
- *
- * Target selection: unique user_ids from the orders table joined to
- * profiles. This excludes admins and casual browsers — only people who
- * have already bought something hear about new products.
- *
- * To broadcast to every user who has opened the app instead (wider reach,
- * lower engagement, higher block risk), replace the target-query block
- * with:
- *
- *   const { data: profiles } = await supabaseAdmin
- *     .from('profiles')
- *     .select('telegram_id')
- *     .eq('role', 'customer');
- *
- * ...and delete the orders query.
- */
+// ---------------------------------------------------------------------
+// Admin notifications
+// ---------------------------------------------------------------------
+
+export async function notifyAdminsOfOrder(order: {
+  code: string;
+  customer: string;
+  city: string;
+  total: number;
+}): Promise<void> {
+  const { data: admins } = await supabaseAdmin
+    .from('profiles')
+    .select('telegram_id')
+    .in('role', ['admin', 'superadmin']);
+
+  if (!admins || admins.length === 0) return;
+
+  const { currency_symbol } = await loadSettings();
+  const text = `<b>New order received</b>\n\n#${order.code}\n${order.customer} · ${order.city}\n${currency_symbol}${order.total}`;
+
+  for (const a of admins) {
+    try {
+      await sendMessage(Number(a.telegram_id), text, webAppButton('Open Admin'));
+    } catch (err) {
+      console.error('[bot] admin notify failed:', err);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------
+// Buyer notifications
+// ---------------------------------------------------------------------
+
+export async function notifyBuyerOfDelivery(params: {
+  telegramId: number;
+  orderCode: string;
+}): Promise<void> {
+  const { store_name } = await loadSettings();
+  await sendMessage(
+    params.telegramId,
+    `<b>Your order is ready</b>\n\nOrder #${params.orderCode} from ${store_name}. Tap below to view.`,
+    webAppButton('View order'),
+  );
+}
+
+export async function deliverDigitalGood(params: {
+  telegramId: number;
+  orderCode: string;
+  productName: string;
+  filePath: string;
+}): Promise<boolean> {
+  // 24-hour signed URL. Buyer clicks it in Telegram; Supabase serves the
+  // file directly. After 24h the link is dead and cannot be reshared.
+  const { data, error } = await supabaseAdmin.storage
+    .from('digital-goods')
+    .createSignedUrl(params.filePath, 60 * 60 * 24);
+
+  if (error || !data?.signedUrl) {
+    console.error('[bot] signed url failed:', error);
+    return false;
+  }
+
+  const text = `<b>Your download is ready</b>\n\n${params.productName}\nOrder #${params.orderCode}\n\nLink expires in 24 hours.`;
+
+  try {
+    await sendMessage(params.telegramId, text, urlButton('Download', data.signedUrl));
+    return true;
+  } catch (err) {
+    console.error('[bot] digital delivery failed:', err);
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------
+// Product broadcast (buyers only)
+// ---------------------------------------------------------------------
+
 export async function broadcastNewProduct(product: {
   name: string;
   price: number;
 }): Promise<void> {
-  // ---- Target: users with at least one order ----
   const { data: orders } = await supabaseAdmin
     .from('orders')
     .select('user_id')
@@ -169,32 +239,15 @@ export async function broadcastNewProduct(product: {
     return;
   }
 
-  // ---- Store metadata for the message ----
-  const { data: settings } = await supabaseAdmin
-    .from('store_settings')
-    .select('store_name, currency_symbol')
-    .eq('id', 1)
-    .maybeSingle();
+  const { store_name, currency_symbol } = await loadSettings();
+  const text = `<b>New in ${store_name}</b>\n\n${product.name} — ${currency_symbol}${product.price}`;
 
-  const storeName = settings?.store_name ?? 'the store';
-  const symbol = settings?.currency_symbol ?? '$';
-
-  const text = `<b>New in ${storeName}</b>\n\n${product.name} — ${symbol}${product.price}`;
-
-  // ---- Send with throttling ----
   let sent = 0;
   for (const p of profiles) {
     try {
-      await sendMessage(
-        Number(p.telegram_id),
-        text,
-        webAppButton('View in Shop') as unknown as Record<string, unknown>,
-      );
+      await sendMessage(Number(p.telegram_id), text, webAppButton('View in Shop'));
       sent += 1;
-      // Telegram allows ~30 msg/sec. Throttle every 25 messages.
-      if (sent % 25 === 0) {
-        await new Promise((r) => setTimeout(r, 1100));
-      }
+      if (sent % 25 === 0) await new Promise((r) => setTimeout(r, 1100));
     } catch (err) {
       console.error(`[bot] broadcast to ${p.telegram_id} failed:`, err);
     }
