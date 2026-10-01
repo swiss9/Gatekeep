@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import { ZodError } from 'zod';
 import { env } from './env.js';
 import { HttpError } from './middleware/auth.js';
+import { startBot } from './bot.js';
 import { authRoutes } from './routes/auth.js';
 import { storeRoutes } from './routes/store.js';
 import { productRoutes } from './routes/products.js';
@@ -18,14 +19,11 @@ async function build(): Promise<FastifyInstance> {
   });
 
   await app.register(cors, {
-    // In production we lock CORS to the exact Vercel URL set in env.
-    // In development we allow everything so `bun dev` works from any host.
     origin: env.NODE_ENV === 'production' ? env.CLIENT_ORIGIN : true,
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
   });
 
-  // ---- Error mapping ----
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof ZodError) {
       return reply.code(400).send({
@@ -58,6 +56,7 @@ const app = await build();
 try {
   await app.listen({ port: env.PORT, host: '0.0.0.0' });
   app.log.info(`Gatekeep Shop server listening on :${env.PORT}`);
+  startBot();
 } catch (err) {
   app.log.error(err);
   process.exit(1);
