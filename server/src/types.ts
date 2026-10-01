@@ -1,8 +1,3 @@
-/**
- * Domain types shared across the server.
- * Mirrors the Postgres schema in supabase/migrations/001_initial.sql.
- */
-
 export type Role = 'customer' | 'admin' | 'superadmin';
 
 export type Profile = {
@@ -14,6 +9,8 @@ export type Profile = {
   invited_by: string | null;
   created_at: string;
 };
+
+export type PaymentProvider = 'none' | 'stripe_link' | 'ton' | 'custom';
 
 export type StoreSettings = {
   id: 1;
@@ -29,6 +26,13 @@ export type StoreSettings = {
   banner_cta: string;
   banner_cta_action: 'all' | 'category' | 'search';
   banner_color: 'mint' | 'blue' | 'pink' | 'yellow' | 'neutral';
+  payment_provider: PaymentProvider;
+  payment_url: string;
+  payment_ton_address: string;
+  perks_enabled: boolean;
+  perk_1_text: string;
+  perk_2_text: string;
+  perk_3_text: string;
   updated_at: string;
 };
 
@@ -38,6 +42,8 @@ export type Category = {
   position: number;
   created_at: string;
 };
+
+export type DeliveryType = 'physical' | 'digital' | 'none';
 
 export type Product = {
   id: string;
@@ -51,11 +57,19 @@ export type Product = {
   active: boolean;
   rating: number;
   review_count: number;
+  delivery_type: DeliveryType;
+  digital_file_path: string | null;
   created_at: string;
   updated_at: string;
 };
 
-export type OrderStatus = 'Processing' | 'In transit' | 'Delivered' | 'Cancelled';
+export type OrderStatus =
+  | 'Pending payment'
+  | 'Paid'
+  | 'Processing'
+  | 'In transit'
+  | 'Delivered'
+  | 'Cancelled';
 
 export type Order = {
   id: string;
@@ -70,6 +84,8 @@ export type Order = {
   subtotal: number;
   shipping: number;
   total: number;
+  payment_confirmed_at: string | null;
+  delivered_at: string | null;
   created_at: string;
 };
 
