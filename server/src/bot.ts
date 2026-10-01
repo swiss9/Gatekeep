@@ -74,7 +74,10 @@ async function pollLoop(): Promise<void> {
       const res = await fetch(`${BOT_API}/getUpdates?offset=${offset}&timeout=30`);
       const json = (await res.json()) as {
         ok: boolean;
-        result?: Array<{ update_id: number; message?: { chat: { id: number }; text?: string } }>;
+        result?: Array<{
+          update_id: number;
+          message?: { chat: { id: number }; text?: string };
+        }>;
       };
       if (json.ok && Array.isArray(json.result)) {
         for (const update of json.result) {
@@ -104,15 +107,58 @@ export function stopBot(): void {
   running = false;
 }
 
+/**
+ * Broadcast a new product to customers who have placed at least one order.
+ *
+ * Target selection: unique user_ids from the orders table joined to
+ * profiles. This excludes admins and casual browsers — only people who
+ * have already bought something hear about new products.
+ *
+ * To broadcast to every user who has opened the app instead (wider reach,
+ * lower engagement, higher block risk), replace the target-query block
+ * with:
+ *
+ *   const { data: profiles } = await supabaseAdmin
+ *     .from('profiles')
+ *     .select('telegram_id')
+ *     .eq('role', 'customer');
+ *
+ * ...and delete the orders query.
+ */
 export async function broadcastNewProduct(product: {
   name: string;
   price: number;
 }): Promise<void> {
+  // ---- Target: users with at least one order ----
+  const { data: orders } = await supabaseAdmin
+    .from('orders')
+    .select('user_id')
+    .not('user_id', 'is', null);
+
+  const uniqueIds = [
+    ...new Set(
+      (orders ?? [])
+        .map((o) => o.user_id as string | null)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+
+  if (uniqueIds.length === 0) {
+    console.log('[bot] broadcast skipped: no buyers yet');
+    return;
+  }
+
   const { data: profiles } = await supabaseAdmin
     .from('profiles')
-    .select('telegram_id');
-  if (!profiles || profiles.length === 0) return;
+    .select('telegram_id')
+    .in('id', uniqueIds);
 
+  if (!profiles || profiles.length === 0) {
+    console.log('[bot] broadcast skipped: no matching profiles');
+    return;
+  }
+
+  // ---- Store metadata for the message ----
   const { data: settings } = await supabaseAdmin
     .from('store_settings')
     .select('store_name, currency_symbol')
@@ -124,6 +170,7 @@ export async function broadcastNewProduct(product: {
 
   const text = `<b>New in ${storeName}</b>\n\n${product.name} — ${symbol}${product.price}`;
 
+  // ---- Send with throttling ----
   let sent = 0;
   for (const p of profiles) {
     try {
@@ -133,7 +180,7 @@ export async function broadcastNewProduct(product: {
         webAppButton('View in Shop'),
       );
       sent += 1;
-      // Telegram allows ~30 msg/sec. Throttle in batches of 25.
+      // Telegram allows ~30 msg/sec. Throttle every 25 messages.
       if (sent % 25 === 0) {
         await new Promise((r) => setTimeout(r, 1100));
       }
@@ -141,5 +188,5 @@ export async function broadcastNewProduct(product: {
       console.error(`[bot] broadcast to ${p.telegram_id} failed:`, err);
     }
   }
-  console.log(`[bot] broadcast sent to ${sent}/${profiles.length} users`);
+  console.log(`[bot] broadcast sent to ${sent}/${profiles.length} buyers`);
 }
