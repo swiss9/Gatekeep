@@ -19,7 +19,11 @@ export type InitData = {
 const MAX_AGE_SECONDS = 60 * 60 * 24;
 
 export function validateInitData(initData: string): InitData {
-  const params = new URLSearchParams(initData);
+  // Telegram sends values URL-encoded. URLSearchParams uses form-encoding,
+  // where '+' means space. Telegram's '+' is a literal plus. So we first
+  // escape any '+' as %2B to preserve its meaning, then parse.
+  const normalized = initData.replace(/\+/g, '%2B');
+  const params = new URLSearchParams(normalized);
 
   const hash = params.get('hash');
   if (!hash) throw new Error('initData: missing hash');
@@ -40,7 +44,7 @@ export function validateInitData(initData: string): InitData {
     .update(dataCheckString)
     .digest('hex');
 
-  // ---- DIAGNOSTIC LOGS (remove after debugging) ----
+  // ---- DIAGNOSTIC LOGS (remove after fixing the hash mismatch) ----
   // eslint-disable-next-line no-console
   console.log('=== telegram initData debug ===');
   // eslint-disable-next-line no-console
@@ -50,16 +54,18 @@ export function validateInitData(initData: string): InitData {
   // eslint-disable-next-line no-console
   console.log('token_suffix:', env.TELEGRAM_BOT_TOKEN.slice(-6));
   // eslint-disable-next-line no-console
-  console.log('hash_received:', hash.slice(0, 12));
+  console.log('hash_received:', hash);
   // eslint-disable-next-line no-console
-  console.log('hash_expected:', expectedHex.slice(0, 12));
+  console.log('hash_expected:', expectedHex);
   // eslint-disable-next-line no-console
-  console.log('data_check_len:', dataCheckString.length);
+  console.log('data_check_string:', JSON.stringify(dataCheckString));
   // eslint-disable-next-line no-console
-  console.log('data_check_keys:', [...params.keys()].sort().join(','));
+  console.log('initData_raw_len:', initData.length);
+  // eslint-disable-next-line no-console
+  console.log('initData_raw:', initData);
   // eslint-disable-next-line no-console
   console.log('===============================');
-  // --------------------------------------------------
+  // ----------------------------------------------------------------
 
   const a = Buffer.from(expectedHex, 'hex');
   const b = Buffer.from(hash, 'hex');
