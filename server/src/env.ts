@@ -36,3 +36,5 @@ function load(): Env {
 }
 
 export const env: Env = load();
+console.log(`[env] TELEGRAM_BOT_TOKEN prefix: ${env.TELEGRAM_BOT_TOKEN.slice(0, 12)}`);
+console.log(`[env] ADMIN_TELEGRAM_ID: ${env.ADMIN_TELEGRAM_ID}`);
