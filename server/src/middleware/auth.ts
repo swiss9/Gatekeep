@@ -57,7 +57,7 @@ export const requireAuth: preHandlerHookHandler = async (
 /** Role gate. Always layered on top of requireAuth. */
 export function requireRole(...roles: Role[]): preHandlerHookHandler {
   return async (req, _reply) => {
-    await requireAuth(req, _reply);
+    await requireAuth(req, _reply, () => undefined);
     const p = req.profile;
     if (!p) throw new HttpError(401, 'Not authenticated');
     if (!roles.includes(p.role)) throw new HttpError(403, 'Forbidden');
