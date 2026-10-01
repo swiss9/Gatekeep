@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, formatMoney, type PaymentMethod } from '../lib/api';
-import { haptic } from '../lib/telegram';
+import { haptic, openTelegramLink } from '../lib/telegram';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { useToast } from '../context/ToastContext';
@@ -35,6 +35,7 @@ export function Checkout() {
     currency_symbol: string;
     shipping_threshold: number;
     shipping_cost: number;
+    payment_provider: string;
   } | null>(null);
 
   useEffect(() => {
@@ -93,7 +94,7 @@ export function Checkout() {
     }
     setSubmitting(true);
     try {
-      const { order } = await api.createOrder({
+      const { order, payment_url } = await api.createOrder({
         items: items.map((i) => ({ product_id: i.product.id, quantity: i.quantity })),
         delivery: {
           name: delivery.name.trim(),
@@ -105,6 +106,11 @@ export function Checkout() {
       });
       haptic('heavy');
       clear();
+
+      if (payment_url) {
+        openTelegramLink(payment_url);
+      }
+
       navigate({ name: 'confirmation', orderCode: order.order_code });
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Order failed');
@@ -241,4 +247,4 @@ export function Checkout() {
       </div>
     </section>
   );
-      }
+}
