@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { supabaseAdmin } from '../supabase.js';
-import { HttpError, requireRole, currentProfile } from '../middleware/auth.js';
+import { HttpError, authenticate, requireRole, currentProfile } from '../middleware/auth.js';
 import { ProductCreateSchema, ProductUpdateSchema } from '../schemas.js';
 import type { Product } from '../types.js';
 
@@ -13,12 +13,13 @@ export const productRoutes: FastifyPluginAsync = async (app) => {
     const header = req.headers.authorization;
     if (header?.startsWith('Bearer ') && q.all === '1') {
       try {
-        await requireRole('admin', 'superadmin')(req, reply, () => undefined);
-        isAdmin = true;
-      } catch (err) {
-        if (!(err instanceof HttpError) || err.status !== 403) {
-          throw err;
+        const profile = await authenticate(req);
+        if (profile.role === 'admin' || profile.role === 'superadmin') {
+          isAdmin = true;
         }
+      } catch (err) {
+        if (!(err instanceof HttpError)) throw err;
+        if (err.status !== 401 && err.status !== 403) throw err;
       }
     }
     if (!isAdmin) query = query.eq('active', true);
@@ -97,6 +98,7 @@ export const productRoutes: FastifyPluginAsync = async (app) => {
         .eq('id', id);
       if (error) throw new HttpError(500, error.message);
 
+      // eslint-disable-next-line no-console
       console.log(`[admin] product ${id} deactivated by ${actor.id} (${actor.role})`);
       return reply.send({ ok: true });
     },
