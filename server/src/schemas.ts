@@ -1,13 +1,11 @@
 import { z } from 'zod';
 
-/** Payload of POST /api/auth/validate. */
 export const AuthValidateSchema = z.object({
   initData: z.string().min(1),
   start_param: z.string().optional(),
 });
 export type AuthValidateInput = z.infer<typeof AuthValidateSchema>;
 
-/** Payload of POST /api/orders. */
 export const OrderItemInputSchema = z.object({
   product_id: z.string().uuid(),
   quantity: z.number().int().min(1).max(99),
@@ -25,8 +23,6 @@ export const OrderCreateSchema = z.object({
 });
 export type OrderCreateInput = z.infer<typeof OrderCreateSchema>;
 
-/** Product create/update. Image is uploaded to Storage by the client
- *  directly (using the user's Supabase JWT); the server only stores the URL. */
 export const ProductCreateSchema = z.object({
   name: z.string().trim().min(1).max(160),
   description: z.string().trim().max(2000).optional().default(''),
@@ -36,6 +32,8 @@ export const ProductCreateSchema = z.object({
   pastel_color: z.enum(['blue', 'pink', 'yellow', 'mint']).default('blue'),
   stock: z.number().int().min(0).max(1_000_000).default(0),
   active: z.boolean().default(true),
+  delivery_type: z.enum(['physical', 'digital', 'none']).default('physical'),
+  digital_file_path: z.string().nullable().optional(),
 });
 
 export const ProductUpdateSchema = ProductCreateSchema.partial();
@@ -60,10 +58,24 @@ export const SettingsUpdateSchema = z.object({
   banner_cta: z.string().trim().max(40).optional(),
   banner_cta_action: z.enum(['all', 'category', 'search']).optional(),
   banner_color: z.enum(['mint', 'blue', 'pink', 'yellow', 'neutral']).optional(),
+  payment_provider: z.enum(['none', 'stripe_link', 'ton', 'custom']).optional(),
+  payment_url: z.string().max(500).optional(),
+  payment_ton_address: z.string().max(120).optional(),
+  perks_enabled: z.boolean().optional(),
+  perk_1_text: z.string().trim().max(80).optional(),
+  perk_2_text: z.string().trim().max(80).optional(),
+  perk_3_text: z.string().trim().max(80).optional(),
 });
 
 export const OrderStatusUpdateSchema = z.object({
-  status: z.enum(['Processing', 'In transit', 'Delivered', 'Cancelled']),
+  status: z.enum([
+    'Pending payment',
+    'Paid',
+    'Processing',
+    'In transit',
+    'Delivered',
+    'Cancelled',
+  ]),
 });
 
 export const InviteCreateSchema = z.object({
