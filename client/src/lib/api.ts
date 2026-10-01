@@ -10,6 +10,8 @@ export type Profile = {
   created_at: string;
 };
 
+export type PaymentProvider = 'none' | 'stripe_link' | 'ton' | 'custom';
+
 export type StoreSettings = {
   id: 1;
   store_name: string;
@@ -24,6 +26,13 @@ export type StoreSettings = {
   banner_cta: string;
   banner_cta_action: 'all' | 'category' | 'search';
   banner_color: 'mint' | 'blue' | 'pink' | 'yellow' | 'neutral';
+  payment_provider: PaymentProvider;
+  payment_url: string;
+  payment_ton_address: string;
+  perks_enabled: boolean;
+  perk_1_text: string;
+  perk_2_text: string;
+  perk_3_text: string;
   updated_at: string;
 };
 
@@ -35,6 +44,7 @@ export type Category = {
 };
 
 export type PastelColor = 'blue' | 'pink' | 'yellow' | 'mint';
+export type DeliveryType = 'physical' | 'digital' | 'none';
 
 export type Product = {
   id: string;
@@ -48,13 +58,21 @@ export type Product = {
   active: boolean;
   rating: number;
   review_count: number;
+  delivery_type: DeliveryType;
+  digital_file_path: string | null;
   created_at: string;
   updated_at: string;
 };
 
 export type ProductWithCategory = Product & { category_name: string };
 
-export type OrderStatus = 'Processing' | 'In transit' | 'Delivered' | 'Cancelled';
+export type OrderStatus =
+  | 'Pending payment'
+  | 'Paid'
+  | 'Processing'
+  | 'In transit'
+  | 'Delivered'
+  | 'Cancelled';
 
 export type Order = {
   id: string;
@@ -69,6 +87,8 @@ export type Order = {
   subtotal: number;
   shipping: number;
   total: number;
+  payment_confirmed_at: string | null;
+  delivered_at: string | null;
   created_at: string;
 };
 
@@ -110,13 +130,12 @@ export type ProductWriteBody = {
   pastel_color?: PastelColor;
   stock?: number;
   active?: boolean;
+  delivery_type?: DeliveryType;
+  digital_file_path?: string | null;
 };
 
 export class ApiError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
+  constructor(public readonly status: number, message: string) {
     super(message);
     this.name = 'ApiError';
   }
@@ -194,7 +213,10 @@ export const api = {
   myOrders: () => request<{ orders: Order[]; items: OrderItem[] }>('/api/orders/mine'),
 
   createOrder: (body: CreateOrderBody) =>
-    request<{ order: Order }>('/api/orders', { method: 'POST', body }),
+    request<{ order: Order; payment_url: string | null }>('/api/orders', {
+      method: 'POST',
+      body,
+    }),
 
   updateSettings: (patch: Partial<Omit<StoreSettings, 'id' | 'updated_at'>>) =>
     request<{ store: StoreSettings }>('/api/admin/settings', { method: 'PATCH', body: patch }),
@@ -257,19 +279,20 @@ export const api = {
 
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
 
-export async function uploadProductImage(file: File): Promise<string> {
-  if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-    throw new ApiError(400, 'Unsupported image type (use JPG, PNG, WebP or GIF).');
+async function uploadToBucket(file: File, bucket: string, maxBytes: number, allowed: string[]): Promise<string> {
+  if (!allowed.includes(file.type) && !allowed.includes('*')) {
+    throw new ApiError(400, `Unsupported file type.`);
   }
-  if (file.size > MAX_IMAGE_BYTES) {
-    throw new ApiError(400, 'Image too large (max 5MB).');
+  if (file.size > maxBytes) {
+    throw new ApiError(400, `File too large (max ${Math.round(maxBytes / 1024 / 1024)}MB).`);
   }
   if (!token) throw new ApiError(401, 'Not authenticated.');
 
-  const ext = (file.name.split('.').pop() ?? 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const ext = (file.name.split('.').pop() ?? 'bin').toLowerCase().replace(/[^a-z0-9]/g, '');
   const path = `${crypto.randomUUID()}.${ext}`;
-  const uploadUrl = `${SUPABASE_URL}/storage/v1/object/products/${path}`;
+  const uploadUrl = `${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`;
 
   const res = await fetch(uploadUrl, {
     method: 'POST',
@@ -281,8 +304,18 @@ export async function uploadProductImage(file: File): Promise<string> {
     body: file,
   });
 
-  if (!res.ok) throw new ApiError(res.status, 'Image upload failed.');
+  if (!res.ok) throw new ApiError(res.status, 'Upload failed.');
+  return path;
+}
+
+export async function uploadProductImage(file: File): Promise<string> {
+  const path = await uploadToBucket(file, 'products', MAX_IMAGE_BYTES, ALLOWED_IMAGE_TYPES);
   return `${SUPABASE_URL}/storage/v1/object/public/products/${path}`;
+}
+
+export async function uploadDigitalFile(file: File): Promise<string> {
+  const anyType = ['*'];
+  return uploadToBucket(file, 'digital-goods', MAX_FILE_BYTES, anyType);
 }
 
 export function formatMoney(value: number | string, symbol: string): string {
