@@ -20,14 +20,16 @@ const MAX_AGE_SECONDS = 60 * 60 * 24;
 
 export function validateInitData(initData: string): InitData {
   // Telegram sends values URL-encoded. URLSearchParams uses form-encoding,
-  // where '+' means space. Telegram's '+' is a literal plus. So we first
-  // escape any '+' as %2B to preserve its meaning, then parse.
+  // where '+' means space. Telegram's '+' is a literal plus. Escape any
+  // '+' as %2B first so it survives parsing.
   const normalized = initData.replace(/\+/g, '%2B');
   const params = new URLSearchParams(normalized);
 
   const hash = params.get('hash');
   if (!hash) throw new Error('initData: missing hash');
 
+  // Only remove `hash` — `signature` (Ed25519) is included in the
+  // HMAC data-check-string per the 2025 Telegram spec.
   params.delete('hash');
 
   const dataCheckString = [...params.entries()]
@@ -42,29 +44,6 @@ export function validateInitData(initData: string): InitData {
   const expectedHex = createHmac('sha256', secretKey)
     .update(dataCheckString)
     .digest('hex');
-
-  // ---- DIAGNOSTIC LOGS (remove after fixing the hash mismatch) ----
-  // eslint-disable-next-line no-console
-  console.log('=== telegram initData debug ===');
-  // eslint-disable-next-line no-console
-  console.log('token_len:', env.TELEGRAM_BOT_TOKEN.length);
-  // eslint-disable-next-line no-console
-  console.log('token_prefix:', env.TELEGRAM_BOT_TOKEN.slice(0, 12));
-  // eslint-disable-next-line no-console
-  console.log('token_suffix:', env.TELEGRAM_BOT_TOKEN.slice(-6));
-  // eslint-disable-next-line no-console
-  console.log('hash_received:', hash);
-  // eslint-disable-next-line no-console
-  console.log('hash_expected:', expectedHex);
-  // eslint-disable-next-line no-console
-  console.log('data_check_string:', JSON.stringify(dataCheckString));
-  // eslint-disable-next-line no-console
-  console.log('initData_raw_len:', initData.length);
-  // eslint-disable-next-line no-console
-  console.log('initData_raw:', initData);
-  // eslint-disable-next-line no-console
-  console.log('===============================');
-  // ----------------------------------------------------------------
 
   const a = Buffer.from(expectedHex, 'hex');
   const b = Buffer.from(hash, 'hex');
@@ -96,4 +75,4 @@ export function validateInitData(initData: string): InitData {
     startParam: params.get('start_param') ?? undefined,
     authDate,
   };
-}
+    }
