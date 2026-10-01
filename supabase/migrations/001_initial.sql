@@ -1,31 +1,12 @@
 -- =====================================================================
 -- Gatekeep Shop — migration 001
 -- Core schema, RLS policies, and helper functions.
--- Run this first in the Supabase SQL Editor.
 -- =====================================================================
 
 create extension if not exists "pgcrypto";
 
 -- ---------------------------------------------------------------------
--- Helper: admin check that bypasses RLS on profiles.
--- security definer + stable is required — without it, calling
--- is_admin() from a policy on profiles would recurse infinitely.
--- ---------------------------------------------------------------------
-create or replace function public.is_admin(uid uuid)
-returns boolean
-language sql
-security definer
-stable
-set search_path = public
-as $$
-  select exists (
-    select 1 from public.profiles
-    where id = uid and role in ('admin', 'superadmin')
-  );
-$$;
-
--- ---------------------------------------------------------------------
--- profiles
+-- profiles (created FIRST so is_admin can reference it below)
 -- ---------------------------------------------------------------------
 create table if not exists public.profiles (
   id           uuid primary key,
@@ -45,34 +26,35 @@ create index if not exists idx_profiles_telegram
 
 alter table public.profiles enable row level security;
 
--- RLS: a user can read their own row; admins can read every row.
+-- ---------------------------------------------------------------------
+-- Helper: admin check. security definer + stable is required — without
+-- it, calling is_admin() from a policy on profiles would recurse.
+-- ---------------------------------------------------------------------
+create or replace function public.is_admin(uid uuid)
+returns boolean
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.profiles
+    where id = uid and role in ('admin', 'superadmin')
+  );
+$$;
+
+-- RLS policies for profiles
 create policy profiles_read_own on public.profiles
   for select using (auth.uid() = id);
 
 create policy profiles_read_admin on public.profiles
   for select using (public.is_admin(auth.uid()));
 
--- Writes go through the server (service role). We deliberately do NOT
--- add insert/update/delete policies for regular users.
+-- Writes go through the server (service role). No insert/update/delete
+-- policies for regular users.
 
 -- ---------------------------------------------------------------------
 -- Role-change guard
--- Any UPDATE that changes `role` must come from the service role.
--- Direct client calls via PostgREST are rejected.
---
--- How the check works:
---   Supabase's PostgREST connects as the `authenticator` role, then
---   issues `SET LOCAL ROLE <target>` for each request based on which
---   API key and JWT were presented. Inside that request the effective
---   Postgres role is visible as `current_user`:
---     * service_role key             → current_user = 'service_role'
---     * anon key + signed user JWT   → current_user = 'authenticated'
---     * anon key, no JWT             → current_user = 'anon'
---   So `current_user = 'service_role'` is the correct way to assert
---   "this UPDATE came from our server, not from a client SDK call".
---   (We do NOT use request.jwt.claim.role here because that GUC is a
---   claim passed through PostgREST, not an authoritative Postgres
---   identity, and it is not reliably set on every write path.)
 -- ---------------------------------------------------------------------
 create or replace function public.prevent_role_change()
 returns trigger
@@ -120,7 +102,6 @@ on conflict (id) do nothing;
 
 alter table public.store_settings enable row level security;
 
--- Store settings are public (they drive the storefront chrome).
 create policy settings_read_all on public.store_settings
   for select using (true);
 
@@ -172,7 +153,6 @@ create index if not exists idx_products_active   on public.products(active) wher
 
 alter table public.products enable row level security;
 
--- Public read: everyone sees active products. Admins see everything.
 create policy products_read_active on public.products
   for select using (active = true or public.is_admin(auth.uid()));
 
@@ -235,7 +215,6 @@ create index if not exists idx_order_items_order on public.order_items(order_id)
 
 alter table public.order_items enable row level security;
 
--- Read mirrors the parent order.
 create policy order_items_read on public.order_items
   for select using (
     exists (
@@ -255,13 +234,11 @@ create policy order_items_insert on public.order_items
 
 -- ---------------------------------------------------------------------
 -- Storage bucket for product images.
--- Public read so <img src="..."> works from the storefront.
 -- ---------------------------------------------------------------------
 insert into storage.buckets (id, name, public)
 values ('products', 'products', true)
 on conflict (id) do nothing;
 
--- Admins can upload/modify. Public can read.
 drop policy if exists "products_storage_read"   on storage.objects;
 drop policy if exists "products_storage_write"  on storage.objects;
 drop policy if exists "products_storage_modify" on storage.objects;
