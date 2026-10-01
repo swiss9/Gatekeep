@@ -10,7 +10,10 @@ declare module 'fastify' {
 }
 
 export class HttpError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
     super(message);
   }
 }
@@ -26,15 +29,11 @@ async function getProfileById(id: string): Promise<Profile | null> {
 }
 
 /**
- * Verifies the bearer JWT and loads the profile.
- * The role is read fresh from the DB — never trusted from the JWT alone,
- * because a demoted admin would otherwise keep acting as admin until
- * their token expired.
+ * Plain async function — verifies the bearer token, loads the profile,
+ * and attaches it to req.profile. This is what hooks AND route handlers
+ * call. No `this` binding, no Fastify hook type gymnastics.
  */
-export const requireAuth: preHandlerHookHandler = async (
-  req: FastifyRequest,
-  _reply: FastifyReply,
-) => {
+export async function authenticate(req: FastifyRequest): Promise<Profile> {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
     throw new HttpError(401, 'Missing bearer token');
@@ -52,15 +51,24 @@ export const requireAuth: preHandlerHookHandler = async (
   if (!profile) throw new HttpError(401, 'Profile not found');
 
   req.profile = profile;
+  return profile;
+}
+
+/** Fastify hook form — thin wrapper around authenticate(). */
+export const requireAuth: preHandlerHookHandler = async (
+  req: FastifyRequest,
+  _reply: FastifyReply,
+) => {
+  await authenticate(req);
 };
 
-/** Role gate. Always layered on top of requireAuth. */
+/** Hook form that also checks role. */
 export function requireRole(...roles: Role[]): preHandlerHookHandler {
-  return async (req, _reply) => {
-    await requireAuth(req, _reply, () => undefined);
-    const p = req.profile;
-    if (!p) throw new HttpError(401, 'Not authenticated');
-    if (!roles.includes(p.role)) throw new HttpError(403, 'Forbidden');
+  return async (req: FastifyRequest, _reply: FastifyReply) => {
+    const profile = await authenticate(req);
+    if (!roles.includes(profile.role)) {
+      throw new HttpError(403, 'Forbidden');
+    }
   };
 }
 
