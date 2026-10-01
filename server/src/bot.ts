@@ -6,6 +6,17 @@ const BOT_API = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}`;
 let offset = 0;
 let running = false;
 
+type InlineKeyboardButton = {
+  text: string;
+  web_app: { url: string };
+};
+
+type ReplyMarkup = {
+  reply_markup: {
+    inline_keyboard: InlineKeyboardButton[][];
+  };
+};
+
 async function callTelegram(method: string, body: unknown): Promise<unknown> {
   const res = await fetch(`${BOT_API}/${method}`, {
     method: 'POST',
@@ -29,7 +40,7 @@ async function sendMessage(
   });
 }
 
-function webAppButton(label: string): unknown {
+function webAppButton(label: string): ReplyMarkup {
   return {
     reply_markup: {
       inline_keyboard: [[{ text: label, web_app: { url: env.MINI_APP_URL } }]],
@@ -177,7 +188,7 @@ export async function broadcastNewProduct(product: {
       await sendMessage(
         Number(p.telegram_id),
         text,
-        webAppButton('View in Shop'),
+        webAppButton('View in Shop') as unknown as Record<string, unknown>,
       );
       sent += 1;
       // Telegram allows ~30 msg/sec. Throttle every 25 messages.
