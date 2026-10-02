@@ -16,13 +16,14 @@ export type PaymentProvider =
   | 'bank'
   | 'crypto'
   | 'stars'
-  | 'stripe_link';
+  | 'stripe';
 
 export type StoreSettings = {
   id: 1;
   store_name: string;
   store_tagline: string;
   currency_symbol: string;
+  currency_code: string;
   shipping_threshold: number;
   shipping_cost: number;
   banner_enabled: boolean;
