@@ -1,44 +1,13 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import type Stripe from 'stripe';
 import { env } from '../env.js';
 import { supabaseAdmin } from '../supabase.js';
+import { stripeClient, stripeWebhookConfigured } from '../stripe.js';
 import { notifyBuyerPaymentConfirmed } from '../bot.js';
-
-function verifyStripeSignature(rawBody: Buffer, header: string, secret: string): boolean {
-  const parts: Record<string, string> = {};
-  for (const p of header.split(',')) {
-    const idx = p.indexOf('=');
-    if (idx === -1) continue;
-    const k = p.slice(0, idx);
-    const v = p.slice(idx + 1);
-    if (k && v && !parts[k]) parts[k] = v;
-  }
-  const t = parts['t'];
-  const v1 = parts['v1'];
-  if (!t || !v1) return false;
-
-  const ts = Number(t);
-  if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > 300) return false;
-
-  const signed = `${t}.${rawBody.toString('utf8')}`;
-  const expected = createHmac('sha256', secret).update(signed).digest();
-  const provided = Buffer.from(v1, 'hex');
-  if (expected.length !== provided.length) return false;
-  return timingSafeEqual(expected, provided);
-}
-
-type StripeSession = {
-  id: string;
-  client_reference_id?: string | null;
-  payment_status?: string;
-  amount_total?: number;
-  currency?: string;
-};
 
 export const paymentRoutes: FastifyPluginAsync = async (app) => {
   app.post('/api/payments/stripe/webhook', async (req: FastifyRequest, reply) => {
-    const secret = env.STRIPE_WEBHOOK_SECRET;
-    if (!secret) {
+    if (!stripeWebhookConfigured()) {
       return reply.code(503).send({ error: 'Stripe webhook not configured' });
     }
 
@@ -52,29 +21,56 @@ export const paymentRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'Missing raw body' });
     }
 
-    if (!verifyStripeSignature(raw, sigHeader, secret)) {
+    // Stripe's own verifier. Handles multi-signature during key rotation,
+    // timestamps, and returns a typed Event.
+    let event: Stripe.Event;
+    try {
+      event = stripeClient().webhooks.constructEvent(
+        raw,
+        sigHeader,
+        env.STRIPE_WEBHOOK_SECRET as string,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'signature check failed';
+      console.warn(`[stripe] webhook rejected: ${msg}`);
       return reply.code(400).send({ error: 'Invalid signature' });
     }
 
-    let event: { type?: string; data?: { object?: unknown } };
     try {
-      event = JSON.parse(raw.toString('utf8')) as typeof event;
-    } catch {
-      return reply.code(400).send({ error: 'Invalid JSON' });
-    }
-
-    if (event.type === 'checkout.session.completed') {
-      const session = event.data?.object as StripeSession | undefined;
-      const orderCode = session?.client_reference_id;
-      if (orderCode && session?.payment_status === 'paid') {
-        await markPaidByOrderCode(orderCode);
+      switch (event.type) {
+        case 'checkout.session.completed': {
+          const session = event.data.object as Stripe.Checkout.Session;
+          if (session.payment_status === 'paid' && session.client_reference_id) {
+            await markPaidByOrderCode(session.client_reference_id);
+          }
+          break;
+        }
+        case 'checkout.session.expired': {
+          const session = event.data.object as Stripe.Checkout.Session;
+          if (session.client_reference_id) {
+            await cancelUnpaidOrder(session.client_reference_id);
+          }
+          break;
+        }
+        default:
+          // Ignore everything else.
+          break;
       }
+    } catch (err) {
+      // Log the failure but return 200 so Stripe does not retry
+      // indefinitely — a code bug would otherwise storm our endpoint.
+      console.error(`[stripe] handler for ${event.type} failed:`, err);
     }
 
     return reply.send({ received: true });
   });
 };
 
+/**
+ * Marks an order paid. Compare-and-set on status ensures this is safe
+ * against a concurrent admin "Confirm paid" click — both paths require
+ * the order to still be 'Pending payment' at write time.
+ */
 async function markPaidByOrderCode(orderCode: string): Promise<void> {
   const now = new Date().toISOString();
   const { data: updated } = await supabaseAdmin
@@ -90,8 +86,8 @@ async function markPaidByOrderCode(orderCode: string): Promise<void> {
     .maybeSingle();
 
   if (!updated) {
-    // Idempotent no-op. Either the order doesn't exist, was already
-    // marked paid by an admin, or was cancelled. Stripe retries are safe.
+    // Either the order doesn't exist, was already marked paid, or was
+    // cancelled. Stripe retries are safe.
     console.log(`[stripe] webhook for order_code=${orderCode} — nothing to do`);
     return;
   }
@@ -111,4 +107,43 @@ async function markPaidByOrderCode(orderCode: string): Promise<void> {
   }
 
   console.log(`[stripe] order ${updated.order_code} marked paid`);
+}
+
+/**
+ * Fires when a Checkout Session expires (24h after creation). Cancels
+ * the order if it is still pending, and restores any stock that was
+ * decremented when the order was placed.
+ */
+async function cancelUnpaidOrder(orderCode: string): Promise<void> {
+  const { data: cancelled } = await supabaseAdmin
+    .from('orders')
+    .update({ status: 'Cancelled' })
+    .eq('order_code', orderCode)
+    .eq('status', 'Pending payment')
+    .select('id, order_code')
+    .maybeSingle();
+
+  if (!cancelled) return;
+
+  // Restore stock for physical lines.
+  const { data: items } = await supabaseAdmin
+    .from('order_items')
+    .select('product_id, quantity')
+    .eq('order_id', cancelled.id);
+
+  for (const line of (items ?? []) as Array<{ product_id: string | null; quantity: number }>) {
+    if (!line.product_id) continue;
+    const { data: p } = await supabaseAdmin
+      .from('products')
+      .select('delivery_type, stock')
+      .eq('id', line.product_id)
+      .maybeSingle();
+    if (!p || p.delivery_type !== 'physical') continue;
+    await supabaseAdmin
+      .from('products')
+      .update({ stock: Number(p.stock) + line.quantity })
+      .eq('id', line.product_id);
+  }
+
+  console.log(`[stripe] order ${cancelled.order_code} cancelled (session expired)`);
 }
