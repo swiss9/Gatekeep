@@ -19,7 +19,10 @@ type State =
   | { kind: 'ready'; order: Order; store: StoreSettings };
 
 const POLL_INTERVAL_MS = 5000;
-const POLL_MAX_MS = 2 * 60 * 1000;
+// 15 minutes. Stripe's own session lives 24h, and bank buyers may take
+// much longer than that. The manual Refresh button covers anything past
+// this window.
+const POLL_MAX_MS = 15 * 60 * 1000;
 
 export function OrderConfirmation({ orderCode }: Props) {
   const { navigate } = useRouter();
@@ -31,6 +34,7 @@ export function OrderConfirmation({ orderCode }: Props) {
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = async (): Promise<State> => {
     const [ordersRes, storeRes] = await Promise.all([api.myOrders(), api.store()]);
@@ -58,8 +62,6 @@ export function OrderConfirmation({ orderCode }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderCode]);
 
-  // Poll for status change on pending orders whose payment flows
-  // through an external provider (Stars, Stripe).
   const shouldPoll =
     state.kind === 'ready' &&
     state.order.status === 'Pending payment' &&
@@ -84,10 +86,24 @@ export function OrderConfirmation({ orderCode }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shouldPoll]);
 
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      const next = await load();
+      setState(next);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Refresh failed');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const currency = state.kind === 'ready' ? state.store.currency_symbol : '$';
   const method = state.kind === 'ready' ? state.order.payment_method : '';
 
-  const isPaid = state.kind === 'ready' && state.order.status !== 'Pending payment' &&
+  const isPaid =
+    state.kind === 'ready' &&
+    state.order.status !== 'Pending payment' &&
     state.order.status !== 'Cancelled';
   const isCancelled = state.kind === 'ready' && state.order.status === 'Cancelled';
 
@@ -141,6 +157,10 @@ export function OrderConfirmation({ orderCode }: Props) {
       toast('Proof submitted — the seller will confirm shortly');
       const next = await load();
       setState(next);
+      // Clear the form so a correction submission starts fresh.
+      setNote('');
+      setTxHash('');
+      setReceiptFile(null);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Submit failed');
     } finally {
@@ -168,7 +188,10 @@ export function OrderConfirmation({ orderCode }: Props) {
 
   return (
     <section className="screen active">
-      <div className="success-wrap" style={{ minHeight: isPaid ? '78dvh' : 'auto', paddingTop: 24 }}>
+      <div
+        className="success-wrap"
+        style={{ minHeight: isPaid ? '78dvh' : 'auto', paddingTop: 24 }}
+      >
         <div
           className="success-icon"
           style={isCancelled ? { background: '#FEE2E2' } : undefined}
@@ -204,59 +227,96 @@ export function OrderConfirmation({ orderCode }: Props) {
         </p>
       </div>
 
-      {/* ---------- Method-specific instructions ---------- */}
-
+      {/* ---------- Stars pending ---------- */}
       {!isPaid && !isCancelled && method === 'stars' && (
         <div className="panel" style={{ marginTop: 20 }}>
           <span className="section-title" style={{ display: 'block', marginBottom: 10 }}>
             Telegram Stars
           </span>
           <p className="muted" style={{ fontSize: 13 }}>
-            Waiting for Telegram to confirm your Stars payment. This page updates
-            automatically.
+            Waiting for Telegram to confirm your Stars payment. This page
+            updates automatically.
           </p>
-          {order.payment_redirect_url && (
+          <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
             <button
               type="button"
               className="btn-primary"
-              style={{ marginTop: 14 }}
-              onClick={() => window.open(order.payment_redirect_url ?? '', '_blank')}
+              style={{ height: 44, fontSize: 14 }}
+              disabled={refreshing}
+              onClick={refresh}
             >
-              Re-open invoice
+              {refreshing ? 'Checking…' : 'Refresh status'}
             </button>
-          )}
+            {order.payment_redirect_url && (
+              <button
+                type="button"
+                className="btn-primary"
+                style={{
+                  height: 44,
+                  fontSize: 14,
+                  background: 'var(--surface)',
+                  color: 'var(--ink)',
+                  border: '1px solid var(--line)',
+                }}
+                onClick={() => window.open(order.payment_redirect_url ?? '', '_blank')}
+              >
+                Re-open invoice
+              </button>
+            )}
+          </div>
         </div>
       )}
 
+      {/* ---------- Stripe pending ---------- */}
       {!isPaid && !isCancelled && method === 'stripe' && (
         <div className="panel" style={{ marginTop: 20 }}>
           <span className="section-title" style={{ display: 'block', marginBottom: 10 }}>
             Card payment
           </span>
           <p className="muted" style={{ fontSize: 13 }}>
-            Waiting for Stripe to confirm your payment. This page updates automatically.
+            Waiting for Stripe to confirm your payment. This page updates
+            automatically.
           </p>
-          {order.payment_redirect_url && (
+          <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
             <button
               type="button"
               className="btn-primary"
-              style={{ marginTop: 14 }}
-              onClick={() => window.open(order.payment_redirect_url ?? '', '_blank')}
+              style={{ height: 44, fontSize: 14 }}
+              disabled={refreshing}
+              onClick={refresh}
             >
-              Re-open checkout
+              {refreshing ? 'Checking…' : 'Refresh status'}
             </button>
-          )}
+            {order.payment_redirect_url && (
+              <button
+                type="button"
+                className="btn-primary"
+                style={{
+                  height: 44,
+                  fontSize: 14,
+                  background: 'var(--surface)',
+                  color: 'var(--ink)',
+                  border: '1px solid var(--line)',
+                }}
+                onClick={() => window.open(order.payment_redirect_url ?? '', '_blank')}
+              >
+                Re-open checkout
+              </button>
+            )}
+          </div>
         </div>
       )}
 
+      {/* ---------- Bank ---------- */}
       {!isPaid && !isCancelled && method === 'bank' && (
         <div className="panel" style={{ marginTop: 20 }}>
           <span className="section-title" style={{ display: 'block', marginBottom: 10 }}>
             Bank transfer
           </span>
           <p className="muted" style={{ fontSize: 12.5, marginBottom: 10 }}>
-            Send {formatMoney(order.total, currency)} to the account below, then
-            submit proof of payment. Include the order code as the reference.
+            Send {formatMoney(order.total, currency)} to the account below,
+            then submit proof of payment. Include the order code as the
+            reference.
           </p>
           <div
             style={{
@@ -290,14 +350,15 @@ export function OrderConfirmation({ orderCode }: Props) {
         </div>
       )}
 
+      {/* ---------- Crypto ---------- */}
       {!isPaid && !isCancelled && method === 'crypto' && (
         <div className="panel" style={{ marginTop: 20 }}>
           <span className="section-title" style={{ display: 'block', marginBottom: 10 }}>
             Crypto payment
           </span>
           <p className="muted" style={{ fontSize: 12.5, marginBottom: 10 }}>
-            Send the equivalent of {formatMoney(order.total, currency)} to one of
-            the addresses below. Then submit the transaction hash.
+            Send the equivalent of {formatMoney(order.total, currency)} to one
+            of the addresses below. Then submit the transaction hash.
           </p>
           {activeCryptoAddresses.length === 0 ? (
             <p className="muted" style={{ fontSize: 12.5 }}>
@@ -314,7 +375,15 @@ export function OrderConfirmation({ orderCode }: Props) {
                   marginBottom: 8,
                 }}
               >
-                <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+                <div
+                  style={{
+                    fontSize: 10.5,
+                    fontWeight: 800,
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase',
+                    color: 'var(--muted)',
+                  }}
+                >
                   {a.label}
                 </div>
                 <div
@@ -341,6 +410,7 @@ export function OrderConfirmation({ orderCode }: Props) {
         </div>
       )}
 
+      {/* ---------- COD ---------- */}
       {!isPaid && !isCancelled && method === 'cod' && (
         <div className="panel" style={{ marginTop: 20 }}>
           <span className="section-title" style={{ display: 'block', marginBottom: 10 }}>
@@ -353,21 +423,22 @@ export function OrderConfirmation({ orderCode }: Props) {
         </div>
       )}
 
+      {/* ---------- Manual ---------- */}
       {!isPaid && !isCancelled && method === 'manual' && (
         <div className="panel" style={{ marginTop: 20 }}>
           <span className="section-title" style={{ display: 'block', marginBottom: 10 }}>
             Arrange with seller
           </span>
           <p className="muted" style={{ fontSize: 13 }}>
-            We'll message you on Telegram to arrange payment and delivery. Use
-            the field below if you have any instructions for us.
+            We'll message you on Telegram to arrange payment and delivery.
+            Use the field below if you have any instructions for us.
           </p>
         </div>
       )}
 
-      {/* ---------- Proof of payment form ---------- */}
-
-      {!isPaid && !isCancelled &&
+      {/* ---------- Proof form ---------- */}
+      {!isPaid &&
+        !isCancelled &&
         (method === 'bank' || method === 'crypto' || method === 'manual') && (
           <div className="panel" style={{ marginTop: 14 }}>
             <span className="section-title" style={{ display: 'block', marginBottom: 10 }}>
@@ -439,4 +510,4 @@ export function OrderConfirmation({ orderCode }: Props) {
       </button>
     </section>
   );
-          }
+                       }
