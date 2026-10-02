@@ -86,3 +86,10 @@ create policy "receipts_read_own_or_admin" on storage.objects
       or public.is_admin(auth.uid())
     )
   );
+
+-- ---------------------------------------------------------------------
+-- orders: persist the external checkout URL so the confirmation screen
+-- can re-open it after a page reload or a Stripe deep-link return.
+-- ---------------------------------------------------------------------
+alter table public.orders
+  add column if not exists payment_redirect_url text;
