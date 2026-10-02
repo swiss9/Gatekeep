@@ -37,7 +37,6 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       ? await supabaseAdmin.from('order_items').select('*').in('order_id', ids)
       : { data: [] as OrderItem[] };
 
-    // Receipt signed URLs, generated per order that has one.
     const ordersWithSigned: Array<Order & { payment_proof_signed_url: string | null }> = [];
     for (const o of (orders as Order[]) ?? []) {
       let signed: string | null = null;
@@ -88,7 +87,6 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       .single();
     if (error || !updated) throw new HttpError(500, error?.message ?? 'confirm failed');
 
-    // Notify buyer.
     if (updated.user_id) {
       const { data: profile } = await supabaseAdmin
         .from('profiles')
@@ -102,6 +100,66 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
         });
       }
     }
+
+    return reply.send({ order: updated as Order });
+  });
+
+  /**
+   * Marks a Pending order as Paid without any real payment. Used to
+   * verify the fulfillment pipeline (buyer notification, digital
+   * delivery, order status) before enabling live processors.
+   *
+   * Sets payment_simulated = true so this is distinguishable from a
+   * real confirmation in the audit trail. Otherwise behaves exactly
+   * like confirm-paid — the buyer gets the same message, and moving
+   * the order to Delivered later triggers the same digital delivery.
+   */
+  app.post('/api/admin/orders/:id/simulate-paid', admin, async (req, reply) => {
+    const me = currentProfile(req);
+    const { id } = req.params as { id: string };
+
+    const { data: existing } = await supabaseAdmin
+      .from('orders')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (!existing) throw new HttpError(404, 'Order not found');
+    if (existing.status !== 'Pending payment') {
+      throw new HttpError(409, 'Order is not awaiting payment.');
+    }
+
+    const now = new Date().toISOString();
+    const { data: updated, error } = await supabaseAdmin
+      .from('orders')
+      .update({
+        status: 'Paid',
+        payment_confirmed_at: now,
+        paid_confirmed_at: now,
+        paid_confirmed_by: me.id,
+        payment_simulated: true,
+      })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error || !updated) throw new HttpError(500, error?.message ?? 'simulate failed');
+
+    if (updated.user_id) {
+      const { data: profile } = await supabaseAdmin
+        .from('profiles')
+        .select('telegram_id')
+        .eq('id', updated.user_id)
+        .maybeSingle();
+      if (profile?.telegram_id) {
+        await notifyBuyerPaymentConfirmed({
+          telegramId: Number(profile.telegram_id),
+          orderCode: updated.order_code,
+        });
+      }
+    }
+
+    console.log(
+      `[admin] order ${updated.order_code} marked paid as SIMULATION by ${me.id}`,
+    );
 
     return reply.send({ order: updated as Order });
   });
