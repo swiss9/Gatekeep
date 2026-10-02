@@ -31,7 +31,6 @@ type TelegramUpdate = {
     total_amount: number;
     currency: string;
   };
-  // Telegram nests successful_payment inside message. Support both.
 };
 
 async function callTelegram(method: string, body: unknown): Promise<unknown> {
@@ -98,14 +97,12 @@ async function handleStart(chatId: number): Promise<void> {
 }
 
 async function handleUpdate(update: TelegramUpdate): Promise<void> {
-  // /start
   const text = update.message?.text;
   if (text?.startsWith('/start')) {
     await handleStart(update.message!.chat.id);
     return;
   }
 
-  // Telegram Stars pre-checkout. Must respond within 10 seconds.
   if (update.pre_checkout_query) {
     const q = update.pre_checkout_query;
     const orderId = q.invoice_payload.startsWith('order:')
@@ -144,9 +141,12 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
 }
 
 /**
- * Marks an order paid in response to a Telegram Stars payment. Called
- * from the poll loop when Telegram confirms payment. Idempotent: only
- * flips if the order is still 'Pending payment'.
+ * Marks an order paid in response to a Telegram Stars payment.
+ *
+ * Uses a compare-and-set on status so it is safe against a concurrent
+ * admin "Confirm paid" click: both paths require the order to still be
+ * 'Pending payment' at write time. If the update matches zero rows,
+ * someone already flipped it and we no-op.
  */
 async function markOrderPaidFromStars(
   invoicePayload: string,
@@ -157,35 +157,37 @@ async function markOrderPaidFromStars(
     : null;
   if (!orderId) return;
 
-  const { data: existing } = await supabaseAdmin
-    .from('orders')
-    .select('id, status, order_code, user_id')
-    .eq('id', orderId)
-    .maybeSingle();
-  if (!existing || existing.status !== 'Pending payment') return;
-
-  await supabaseAdmin
+  const now = new Date().toISOString();
+  const { data: updated } = await supabaseAdmin
     .from('orders')
     .update({
       status: 'Paid',
-      payment_confirmed_at: new Date().toISOString(),
-      paid_confirmed_at: new Date().toISOString(),
+      payment_confirmed_at: now,
+      paid_confirmed_at: now,
       payment_tx_hash: chargeId,
     })
-    .eq('id', orderId);
+    .eq('id', orderId)
+    .eq('status', 'Pending payment')
+    .select('id, order_code, user_id')
+    .maybeSingle();
 
-  // Notify buyer.
-  if (existing.user_id) {
+  if (!updated) {
+    // Either already paid (admin beat us), cancelled, or never existed.
+    console.log(`[bot] stars payment for ${orderId} ignored — not pending`);
+    return;
+  }
+
+  if (updated.user_id) {
     const { data: profile } = await supabaseAdmin
       .from('profiles')
       .select('telegram_id')
-      .eq('id', existing.user_id)
+      .eq('id', updated.user_id)
       .maybeSingle();
     if (profile?.telegram_id) {
       try {
         await sendMessage(
           Number(profile.telegram_id),
-          `<b>Payment confirmed</b>\n\nOrder #${existing.order_code} is paid. We'll notify you again when it ships.`,
+          `<b>Payment confirmed</b>\n\nOrder #${updated.order_code} is paid. We'll notify you again when it ships.`,
           webAppButton('View order'),
         );
       } catch (err) {
@@ -194,7 +196,7 @@ async function markOrderPaidFromStars(
     }
   }
 
-  console.log(`[bot] order ${existing.order_code} marked paid via Stars`);
+  console.log(`[bot] order ${updated.order_code} marked paid via Stars`);
 }
 
 async function pollLoop(): Promise<void> {
@@ -211,11 +213,10 @@ async function pollLoop(): Promise<void> {
           try {
             await handleUpdate(update);
 
-            // successful_payment can arrive at message.successful_payment
-            // or (rarely) top-level depending on update shape.
             const sp =
-              (update as unknown as { message?: { successful_payment?: TelegramUpdate['successful_payment'] } })
-                .message?.successful_payment ?? update.successful_payment;
+              (update as unknown as {
+                message?: { successful_payment?: TelegramUpdate['successful_payment'] };
+              }).message?.successful_payment ?? update.successful_payment;
             if (sp?.invoice_payload && sp.telegram_payment_charge_id) {
               await markOrderPaidFromStars(sp.invoice_payload, sp.telegram_payment_charge_id);
             }
@@ -242,10 +243,6 @@ export function stopBot(): void {
   running = false;
 }
 
-/**
- * Creates a Telegram Stars invoice link. The buyer pays inside Telegram;
- * successful_payment arrives on the bot and flips the order to Paid.
- */
 export async function createStarsInvoiceLink(params: {
   title: string;
   description: string;
@@ -271,10 +268,6 @@ export async function createStarsInvoiceLink(params: {
   }
   return json.result;
 }
-
-// ---------------------------------------------------------------------
-// Notifications (unchanged from prior version)
-// ---------------------------------------------------------------------
 
 export async function notifyAdminsOfOrder(order: {
   code: string;
@@ -405,4 +398,4 @@ export async function broadcastNewProduct(product: {
     }
   }
   console.log(`[bot] broadcast sent to ${sent}/${profiles.length} buyers`);
-                                }
+}
