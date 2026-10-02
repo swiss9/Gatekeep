@@ -281,9 +281,35 @@ const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 
-async function uploadToBucket(file: File, bucket: string, maxBytes: number, allowed: string[]): Promise<string> {
-  if (!allowed.includes(file.type) && !allowed.includes('*')) {
-    throw new ApiError(400, `Unsupported file type.`);
+/**
+ * Digital file allowlist. Deliberately excludes:
+ *   - text/html, image/svg+xml — inline-script XSS vectors if any
+ *     future change serves the file inline (signed URLs default to
+ *     Content-Disposition: attachment, but defense in depth).
+ *   - application/x-msdownload / .exe — malware vector for buyers.
+ * If you sell a format outside this list (e.g. a custom e-book format),
+ * add its MIME type here.
+ */
+const ALLOWED_DIGITAL_TYPES = [
+  'application/pdf',
+  'application/zip',
+  'application/x-zip-compressed',
+  'application/epub+zip',
+  'application/octet-stream', // generic binary — many e-book/DAW exports
+  'audio/mpeg',
+  'audio/wav',
+  'audio/mp4',
+  'video/mp4',
+];
+
+async function uploadToBucket(
+  file: File,
+  bucket: string,
+  maxBytes: number,
+  allowed: string[],
+): Promise<string> {
+  if (!allowed.includes(file.type)) {
+    throw new ApiError(400, `Unsupported file type: ${file.type || 'unknown'}.`);
   }
   if (file.size > maxBytes) {
     throw new ApiError(400, `File too large (max ${Math.round(maxBytes / 1024 / 1024)}MB).`);
@@ -314,8 +340,7 @@ export async function uploadProductImage(file: File): Promise<string> {
 }
 
 export async function uploadDigitalFile(file: File): Promise<string> {
-  const anyType = ['*'];
-  return uploadToBucket(file, 'digital-goods', MAX_FILE_BYTES, anyType);
+  return uploadToBucket(file, 'digital-goods', MAX_FILE_BYTES, ALLOWED_DIGITAL_TYPES);
 }
 
 export function formatMoney(value: number | string, symbol: string): string {
