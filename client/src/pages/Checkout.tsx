@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   api,
   formatMoney,
-  PAYMENT_METHOD_LABEL,
+  VALIDATION,
   type PaymentMethod,
   type StoreSettings,
 } from '../lib/api';
@@ -14,13 +14,9 @@ import { useRouter } from '../App';
 import { PastelThumb } from '../components/PastelThumb';
 
 type Delivery = { name: string; address: string; city: string; zip: string };
-type FieldErrors = Partial<Record<keyof Delivery, boolean>>;
+type FieldErrors = Partial<Record<keyof Delivery, string>>;
 
-type MethodMeta = {
-  id: PaymentMethod;
-  name: string;
-  sub: string;
-};
+type MethodMeta = { id: PaymentMethod; name: string; sub: string };
 
 const METHOD_META: Record<PaymentMethod, { name: string; sub: string }> = {
   stars: { name: 'Telegram Stars', sub: 'pay inside Telegram' },
@@ -30,6 +26,27 @@ const METHOD_META: Record<PaymentMethod, { name: string; sub: string }> = {
   cod: { name: 'Cash on Delivery', sub: 'pay on delivery' },
   manual: { name: 'Arrange with seller', sub: 'we message you' },
 };
+
+function validate(d: Delivery, needsAddress: boolean): FieldErrors {
+  const errs: FieldErrors = {};
+  if (!d.name.trim()) errs.name = 'Required';
+  else if (!VALIDATION.NAME_RE.test(d.name.trim()))
+    errs.name = 'Enter a real name (2+ characters, no symbols)';
+
+  if (needsAddress) {
+    if (!d.address.trim()) errs.address = 'Required';
+    else if (!VALIDATION.ADDRESS_RE.test(d.address.trim()))
+      errs.address = 'Enter a full address (must include a number)';
+
+    if (!d.city.trim()) errs.city = 'Required';
+    else if (!VALIDATION.CITY_RE.test(d.city.trim()))
+      errs.city = 'Enter a real city name';
+
+    if (d.zip.trim() && !VALIDATION.ZIP_RE.test(d.zip.trim()))
+      errs.zip = 'Enter a valid ZIP / postal code';
+  }
+  return errs;
+}
 
 export function Checkout() {
   const { back, navigate } = useRouter();
@@ -50,15 +67,8 @@ export function Checkout() {
 
   useEffect(() => {
     let cancelled = false;
-    api
-      .store()
-      .then((s) => {
-        if (!cancelled) setStore(s.store);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
+    api.store().then((s) => { if (!cancelled) setStore(s.store); }).catch(() => undefined);
+    return () => { cancelled = true; };
   }, []);
 
   const needsAddress = useMemo(
@@ -120,14 +130,10 @@ export function Checkout() {
       toast('Pick a payment method');
       return;
     }
-    const nextErrors: FieldErrors = {
-      name: !delivery.name.trim(),
-      address: needsAddress ? !delivery.address.trim() : false,
-      city: needsAddress ? !delivery.city.trim() : false,
-    };
+    const nextErrors = validate(delivery, needsAddress);
     setErrors(nextErrors);
-    if (Object.values(nextErrors).some(Boolean)) {
-      toast(needsAddress ? 'Please fill in delivery details' : 'Please enter your name');
+    if (Object.keys(nextErrors).length > 0) {
+      toast('Please check the highlighted fields');
       return;
     }
     setSubmitting(true);
@@ -138,32 +144,22 @@ export function Checkout() {
           name: delivery.name.trim(),
           address: needsAddress ? delivery.address.trim() : '',
           city: needsAddress ? delivery.city.trim() : '',
-          zip: delivery.zip.trim() || undefined,
+          zip: needsAddress && delivery.zip.trim() ? delivery.zip.trim() : undefined,
         },
         payment_method: method,
       });
       haptic('heavy');
-
-      // Navigate BEFORE clearing the cart so the empty-cart branch never
-      // renders while an external dialog is opening. The confirmation
-      // screen reloads the order from the server by code, so it does not
-      // depend on cart state.
       navigate({ name: 'confirmation', orderCode: order.order_code });
       clear();
 
       if (payment.kind === 'stars') {
-        openInvoice(payment.invoice_url, () => {
-          // Confirmation screen polls for status; nothing else to do here.
-        });
+        openInvoice(payment.invoice_url, () => undefined);
         return;
       }
-
       if (payment.kind === 'stripe') {
         openExternalLink(payment.url);
         return;
       }
-
-      // bank / crypto / cod / manual — confirmation renders instructions.
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Order failed');
     } finally {
@@ -222,6 +218,7 @@ export function Checkout() {
             onChange={(e) => setDelivery({ ...delivery, name: e.target.value })}
             placeholder="Jane Cooper"
           />
+          {errors.name && <p style={{ fontSize: 11.5, color: '#B91C1C', marginTop: 4 }}>{errors.name}</p>}
         </div>
         {needsAddress && (
           <>
@@ -231,8 +228,9 @@ export function Checkout() {
                 type="text"
                 value={delivery.address}
                 onChange={(e) => setDelivery({ ...delivery, address: e.target.value })}
-                placeholder="226 Mercer Street"
+                placeholder="226 Mercer Street, Apt 4B"
               />
+              {errors.address && <p style={{ fontSize: 11.5, color: '#B91C1C', marginTop: 4 }}>{errors.address}</p>}
             </div>
             <div className="field-row" style={{ marginBottom: 0 }}>
               <div className={`field${errors.city ? ' error' : ''}`} style={{ marginBottom: 0 }}>
@@ -243,8 +241,9 @@ export function Checkout() {
                   onChange={(e) => setDelivery({ ...delivery, city: e.target.value })}
                   placeholder="New York"
                 />
+                {errors.city && <p style={{ fontSize: 11.5, color: '#B91C1C', marginTop: 4 }}>{errors.city}</p>}
               </div>
-              <div className="field" style={{ marginBottom: 0 }}>
+              <div className={`field${errors.zip ? ' error' : ''}`} style={{ marginBottom: 0 }}>
                 <label>ZIP</label>
                 <input
                   type="text"
@@ -252,6 +251,7 @@ export function Checkout() {
                   onChange={(e) => setDelivery({ ...delivery, zip: e.target.value })}
                   placeholder="10012"
                 />
+                {errors.zip && <p style={{ fontSize: 11.5, color: '#B91C1C', marginTop: 4 }}>{errors.zip}</p>}
               </div>
             </div>
           </>
@@ -273,9 +273,7 @@ export function Checkout() {
               className={`pay-opt${method === p.id ? ' selected' : ''}`}
               onClick={() => setMethod(p.id)}
             >
-              <span className="radio">
-                <i />
-              </span>
+              <span className="radio"><i /></span>
               <span className="pay-name">{p.name}</span>
               <span className="pay-sub">{p.sub}</span>
             </div>
@@ -291,11 +289,7 @@ export function Checkout() {
         {needsAddress && (
           <div className="sum-row">
             <span>Shipping</span>
-            {shipping === 0 ? (
-              <span className="free">Free</span>
-            ) : (
-              <span className="val">{formatMoney(shipping, currency)}</span>
-            )}
+            {shipping === 0 ? <span className="free">Free</span> : <span className="val">{formatMoney(shipping, currency)}</span>}
           </div>
         )}
         <div className="sum-row total">
@@ -311,16 +305,9 @@ export function Checkout() {
           disabled={submitting || !method}
           onClick={submit}
         >
-          {submitting
-            ? 'Placing order…'
-            : method
-              ? `Pay ${formatMoney(total, currency)}`
-              : 'Select method'}
+          {submitting ? 'Placing order…' : method ? `Pay ${formatMoney(total, currency)}` : 'Select method'}
         </button>
       </div>
     </section>
   );
 }
-
-// Keep the label map reachable if other screens import it from here.
-void PAYMENT_METHOD_LABEL;
