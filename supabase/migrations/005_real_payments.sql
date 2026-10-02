@@ -1,24 +1,28 @@
 -- =====================================================================
 -- Gatekeep Shop — migration 005
--- Real payment methods: Stars, Stripe, bank, crypto, COD, manual.
--- Proof-of-payment fields on orders. Private receipts bucket.
+-- Real payment methods: Stars, Stripe (Checkout Sessions), bank,
+-- crypto, COD, manual. Proof-of-payment fields on orders. Private
+-- receipts bucket. Currency code for Stripe.
 -- Run after 004. Safe to re-run.
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
--- store_settings: provider-specific configuration
+-- store_settings: migrate payment_provider values, narrow the constraint
 -- ---------------------------------------------------------------------
 alter table public.store_settings
   drop constraint if exists store_settings_payment_provider_check;
 
--- Migrate legacy values first, then re-add the narrower constraint.
-update public.store_settings set payment_provider = 'manual' where payment_provider = 'none';
-update public.store_settings set payment_provider = 'manual' where payment_provider = 'custom';
+-- Legacy values → new equivalents.
+update public.store_settings set payment_provider = 'manual' where payment_provider in ('none','custom');
+update public.store_settings set payment_provider = 'stripe' where payment_provider = 'stripe_link';
 
 alter table public.store_settings
   add constraint store_settings_payment_provider_check
-  check (payment_provider in ('manual','cod','bank','crypto','stars','stripe_link'));
+  check (payment_provider in ('manual','cod','bank','crypto','stars','stripe'));
 
+-- ---------------------------------------------------------------------
+-- store_settings: per-method configuration
+-- ---------------------------------------------------------------------
 alter table public.store_settings
   add column if not exists stars_enabled boolean not null default false,
   add column if not exists stars_rate numeric not null default 77,
@@ -30,6 +34,19 @@ alter table public.store_settings
   add column if not exists crypto_usdt_trc20 text not null default '',
   add column if not exists crypto_ton text not null default '',
   add column if not exists stripe_enabled boolean not null default false;
+
+-- ---------------------------------------------------------------------
+-- store_settings: 3-letter ISO currency code (Stripe rejects symbols)
+-- ---------------------------------------------------------------------
+alter table public.store_settings
+  add column if not exists currency_code text not null default 'usd';
+
+alter table public.store_settings
+  drop constraint if exists store_settings_currency_code_check;
+
+alter table public.store_settings
+  add constraint store_settings_currency_code_check
+  check (currency_code ~ '^[a-z]{3}$');
 
 -- ---------------------------------------------------------------------
 -- orders: proof of payment + who confirmed
