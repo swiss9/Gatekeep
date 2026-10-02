@@ -30,6 +30,8 @@ function buildPaymentUrl(
     return `${settings.payment_url}${sep}client_reference_id=${encodeURIComponent(orderCode)}`;
   }
   if (settings.payment_provider === 'ton' && settings.payment_ton_address) {
+    // Amount is expressed in nanoTON. Assumes the store prices in TON —
+    // see README section on payments.
     return `ton://transfer/${settings.payment_ton_address}?amount=${Math.round(total * 1e9)}&text=${encodeURIComponent(orderCode)}`;
   }
   if (settings.payment_provider === 'custom' && settings.payment_url) {
@@ -171,12 +173,16 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    // Fire-and-forget admin notification.
-    void notifyAdminsOfOrder({
+    // Fire-and-forget, but catch failures so an unhandled rejection does
+    // not crash the process. Telegram being briefly down should never
+    // affect order creation.
+    notifyAdminsOfOrder({
       code: order.order_code,
       customer: order.customer_name,
       city: order.customer_city,
       total: order.total,
+    }).catch((err: unknown) => {
+      console.error('[orders] admin notify failed:', err);
     });
 
     const paymentUrl = buildPaymentUrl(settings, order.order_code, order.total);
