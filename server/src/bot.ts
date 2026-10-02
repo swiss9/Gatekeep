@@ -21,10 +21,7 @@ type ReplyMarkup = {
 type TelegramUpdate = {
   update_id: number;
   message?: { chat: { id: number }; text?: string };
-  pre_checkout_query?: {
-    id: string;
-    invoice_payload: string;
-  };
+  pre_checkout_query?: { id: string; invoice_payload: string };
   successful_payment?: {
     invoice_payload: string;
     telegram_payment_charge_id: string;
@@ -72,10 +69,18 @@ function urlButton(label: string, url: string): ReplyMarkup {
   };
 }
 
-async function loadSettings(): Promise<{
-  store_name: string;
-  currency_symbol: string;
-}> {
+function urlAndAppButtons(label: string, url: string, appLabel: string): ReplyMarkup {
+  return {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: label, url }],
+        [{ text: appLabel, web_app: { url: env.MINI_APP_URL } }],
+      ],
+    },
+  };
+}
+
+async function loadSettings(): Promise<{ store_name: string; currency_symbol: string }> {
   const { data } = await supabaseAdmin
     .from('store_settings')
     .select('store_name, currency_symbol')
@@ -133,21 +138,10 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
       return;
     }
 
-    await callTelegram('answerPreCheckoutQuery', {
-      pre_checkout_query_id: q.id,
-      ok: true,
-    });
+    await callTelegram('answerPreCheckoutQuery', { pre_checkout_query_id: q.id, ok: true });
   }
 }
 
-/**
- * Marks an order paid in response to a Telegram Stars payment.
- *
- * Uses a compare-and-set on status so it is safe against a concurrent
- * admin "Confirm paid" click: both paths require the order to still be
- * 'Pending payment' at write time. If the update matches zero rows,
- * someone already flipped it and we no-op.
- */
 async function markOrderPaidFromStars(
   invoicePayload: string,
   chargeId: string,
@@ -172,7 +166,6 @@ async function markOrderPaidFromStars(
     .maybeSingle();
 
   if (!updated) {
-    // Either already paid (admin beat us), cancelled, or never existed.
     console.log(`[bot] stars payment for ${orderId} ignored — not pending`);
     return;
   }
@@ -184,15 +177,10 @@ async function markOrderPaidFromStars(
       .eq('id', updated.user_id)
       .maybeSingle();
     if (profile?.telegram_id) {
-      try {
-        await sendMessage(
-          Number(profile.telegram_id),
-          `<b>Payment confirmed</b>\n\nOrder #${updated.order_code} is paid. We'll notify you again when it ships.`,
-          webAppButton('View order'),
-        );
-      } catch (err) {
-        console.error('[bot] stars buyer notify failed:', err);
-      }
+      await notifyBuyerPaymentConfirmed({
+        telegramId: Number(profile.telegram_id),
+        orderCode: updated.order_code,
+      });
     }
   }
 
@@ -203,10 +191,7 @@ async function pollLoop(): Promise<void> {
   while (running) {
     try {
       const res = await fetch(`${BOT_API}/getUpdates?offset=${offset}&timeout=30`);
-      const json = (await res.json()) as {
-        ok: boolean;
-        result?: TelegramUpdate[];
-      };
+      const json = (await res.json()) as { ok: boolean; result?: TelegramUpdate[] };
       if (json.ok && Array.isArray(json.result)) {
         for (const update of json.result) {
           offset = update.update_id + 1;
@@ -260,7 +245,6 @@ export async function createStarsInvoiceLink(params: {
       prices: [{ label: 'Total', amount: params.starsAmount }],
     }),
   });
-
   const json = (await res.json()) as { ok: boolean; result?: string; description?: string };
   if (!json.ok || !json.result) {
     console.error('[bot] createInvoiceLink failed:', json.description);
@@ -283,8 +267,8 @@ export async function notifyAdminsOfOrder(order: {
   if (!admins || admins.length === 0) return;
 
   const { currency_symbol } = await loadSettings();
-  const methodLabel = order.payment_method.replace('_', ' ');
-  const text = `<b>New order received</b>\n\n#${order.code}\n${order.customer} · ${order.city}\n${currency_symbol}${order.total} · via ${methodLabel}`;
+  const methodLabel = order.payment_method.replace(/_/g, ' ');
+  const text = `<b>New order</b>\n\n#${order.code}\n${order.customer} · ${order.city}\n${currency_symbol}${order.total} · ${methodLabel}`;
 
   for (const a of admins) {
     try {
@@ -303,7 +287,7 @@ export async function notifyBuyerOfDelivery(params: {
   try {
     await sendMessage(
       params.telegramId,
-      `<b>Your order is ready</b>\n\nOrder #${params.orderCode} from ${store_name}. Tap below to view.`,
+      `<b>Your order is on the way</b>\n\nOrder #${params.orderCode} from ${store_name}. You can view it and re-download any digital items anytime from the app.`,
       webAppButton('View order'),
     );
   } catch (err) {
@@ -318,7 +302,7 @@ export async function notifyBuyerPaymentConfirmed(params: {
   try {
     await sendMessage(
       params.telegramId,
-      `<b>Payment confirmed</b>\n\nOrder #${params.orderCode} is paid. We'll let you know when it ships.`,
+      `<b>Payment confirmed</b>\n\nOrder #${params.orderCode} is paid. We'll message you again when it ships or when your digital download is ready.`,
       webAppButton('View order'),
     );
   } catch (err) {
@@ -326,9 +310,16 @@ export async function notifyBuyerPaymentConfirmed(params: {
   }
 }
 
+/**
+ * Sends a download link for one digital item, plus an "open in app"
+ * button so the buyer can re-download anytime. The URL is a fresh
+ * 24h signed link — after that window the buyer reopens the app and
+ * gets a new one from /api/orders/:id/downloads.
+ */
 export async function deliverDigitalGood(params: {
   telegramId: number;
   orderCode: string;
+  orderId: string;
   productName: string;
   filePath: string;
 }): Promise<boolean> {
@@ -341,10 +332,14 @@ export async function deliverDigitalGood(params: {
     return false;
   }
 
-  const text = `<b>Your download is ready</b>\n\n${params.productName}\nOrder #${params.orderCode}\n\nLink expires in 24 hours.`;
+  const text = `<b>Your download is ready</b>\n\n${params.productName}\nOrder #${params.orderCode}\n\nLink expires in 24 hours. You can always get a fresh link from the app.`;
 
   try {
-    await sendMessage(params.telegramId, text, urlButton('Download', data.signedUrl));
+    await sendMessage(
+      params.telegramId,
+      text,
+      urlAndAppButtons('Download', data.signedUrl, 'Open in App'),
+    );
     return true;
   } catch (err) {
     console.error('[bot] digital delivery failed:', err);
@@ -378,11 +373,7 @@ export async function broadcastNewProduct(product: {
     .from('profiles')
     .select('telegram_id')
     .in('id', uniqueIds);
-
-  if (!profiles || profiles.length === 0) {
-    console.log('[bot] broadcast skipped: no matching profiles');
-    return;
-  }
+  if (!profiles || profiles.length === 0) return;
 
   const { store_name, currency_symbol } = await loadSettings();
   const text = `<b>New in ${store_name}</b>\n\n${product.name} — ${currency_symbol}${product.price}`;
