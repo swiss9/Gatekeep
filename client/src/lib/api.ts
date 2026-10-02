@@ -112,6 +112,7 @@ export type Order = {
   paid_confirmed_at: string | null;
   paid_confirmed_by: string | null;
   payment_redirect_url: string | null;
+  payment_simulated: boolean;
   created_at: string;
 };
 
@@ -298,6 +299,9 @@ export const api = {
   confirmOrderPaid: (id: string) =>
     request<{ order: Order }>(`/api/admin/orders/${id}/confirm-paid`, { method: 'POST' }),
 
+  simulateOrderPaid: (id: string) =>
+    request<{ order: Order }>(`/api/admin/orders/${id}/simulate-paid`, { method: 'POST' }),
+
   overview: () =>
     request<{
       revenue: number;
@@ -347,12 +351,6 @@ const ALLOWED_DIGITAL_TYPES = [
 
 const ALLOWED_RECEIPT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic'];
 
-/**
- * Uploads a file to Supabase Storage. `upsert` controls the
- * x-upsert header — true means the upload overwrites an existing object
- * at the same path. Receipts use upsert so a buyer can replace a bad
- * image; products and digital goods use create-only.
- */
 async function uploadToBucket(
   file: File,
   bucket: string,
@@ -397,12 +395,6 @@ export async function uploadDigitalFile(file: File): Promise<string> {
   return path;
 }
 
-/**
- * Uploads a payment receipt to the private receipts bucket. RLS requires
- * the path to start with the uploading user's id, hence the folder.
- * `upsert: true` lets a buyer replace an earlier receipt for the same
- * order without hitting a 409.
- */
 export async function uploadReceipt(
   file: File,
   userId: string,
