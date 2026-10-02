@@ -108,6 +108,8 @@ export type Order = {
   payment_tx_hash: string | null;
   paid_confirmed_at: string | null;
   paid_confirmed_by: string | null;
+  payment_redirect_url: string | null;
+  payment_simulated: boolean;
   created_at: string;
 };
 
