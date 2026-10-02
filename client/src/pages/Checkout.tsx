@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, formatMoney, type PaymentMethod } from '../lib/api';
-import { haptic, openTelegramLink } from '../lib/telegram';
+import { haptic, openExternalLink } from '../lib/telegram';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { useToast } from '../context/ToastContext';
@@ -107,8 +107,9 @@ export function Checkout() {
       haptic('heavy');
       clear();
 
-      if (payment_url) {
-        openTelegramLink(payment_url);
+      // Cash on delivery is settled in person — no provider redirect.
+      if (payment_url && payment !== 'cod') {
+        openExternalLink(payment_url);
       }
 
       navigate({ name: 'confirmation', orderCode: order.order_code });
