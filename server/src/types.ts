@@ -106,6 +106,7 @@ export type Order = {
   payment_proof_url: string | null;
   payment_proof_note: string | null;
   payment_tx_hash: string | null;
+  payment_proof_submitted_at: string | null;
   paid_confirmed_at: string | null;
   paid_confirmed_by: string | null;
   payment_redirect_url: string | null;
