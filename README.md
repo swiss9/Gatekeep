@@ -126,3 +126,175 @@ Push the repo to GitHub. On [render.com](https://render.com):
 - Start: `bun src/index.ts`
 
 Add these environment variables:
+
+PORT=8080
+NODE_ENV=production
+SUPABASE_URL=...
+SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
+SUPABASE_JWT_SECRET=...
+TELEGRAM_BOT_TOKEN=...
+ADMIN_TELEGRAM_ID=...
+TELEGRAM_BOT_USERNAME=YourBotUsername
+CLIENT_ORIGIN=https://your-store.vercel.app
+MINI_APP_URL=https://your-store.vercel.app
+**Optional, for Stripe:**
+STRIPE_SECRET_KEY=sk_live_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+
+
+Deploy. Copy the Render URL.
+
+### 4. Deploy the client (Vercel)
+
+On [vercel.com](https://vercel.com), import the same repo:
+
+- Root directory: `client`
+- Framework: Vite
+
+Environment variables:
+VITE_API_URL=https://your-service.onrender.com
+VITE_SUPABASE_URL=https://xxxxxxxx.supabase.co
+VITE_SUPABASE_ANON_KEY=...
+VITE_BOT_USERNAME=YourBotUsername
+
+
+Deploy. Copy the Vercel URL.
+
+### 5. Close the loop
+
+Back on Render, update `CLIENT_ORIGIN` and `MINI_APP_URL` to the Vercel
+URL. Redeploy.
+
+### 6. Register the Mini App
+
+In [@BotFather](https://t.me/BotFather):
+
+- `/newapp` → pick the bot → set the Web App URL to your Vercel URL
+- Bot Settings → Menu Button → same URL
+
+Both must point at the same URL. Without `/newapp`, invite links fail.
+
+### 7. Stripe webhook (skip if not using Stripe)
+
+Already covered above. Do this after the server is live.
+
+### 8. First open
+
+Open the bot, tap the menu button. You'll land in the storefront with an
+Admin tab. Add a product, set up your payment methods, buy something
+yourself, confirm the payment.
+
+---
+
+## Customizing
+
+Everything is done from **Admin** — no code changes.
+
+| What | Where |
+|---|---|
+| Store name, tagline, currency | Admin → Settings |
+| Free shipping threshold | Admin → Settings |
+| Payment methods | Admin → Settings |
+| Home banner | Admin → Settings |
+| Perks (3 product-page bullets) | Admin → Settings |
+| Categories | Admin → Categories |
+| Products, images, stock | Admin → Products |
+| Order status | Admin → Orders |
+| Confirm paid | Admin → Orders (Pending payment tab) |
+| Admins and invites | Admin → Team |
+
+---
+
+## Team and roles
+
+Two roles:
+
+- **superadmin** — owner. Full control, cannot be removed.
+- **admin** — staff. Manage products, orders, settings. Cannot remove
+  other admins.
+
+**Add an admin:** Team → Invite admin. A one-time link is copied. It
+expires in 48 hours and can be revoked.
+
+**Transfer ownership:** Team → Transfer. You are demoted, they become
+superadmin. Then update `ADMIN_TELEGRAM_ID` on the server and redeploy.
+
+---
+
+## Extending payments
+
+The Stripe webhook at `server/src/routes/payments.ts` is a working
+template for any processor that signs its webhooks. To add a new
+provider:
+
+1. Add its enable flag and any config fields to `store_settings`.
+2. Add a case to `buildPaymentPayload` in `routes/orders.ts` that
+   returns instructions for the buyer.
+3. Add a webhook route that verifies the signature and calls
+   `markPaidByOrderCode`.
+4. Add a section to Admin → Settings.
+
+The buyer-facing side (Checkout + OrderConfirmation) already handles
+instructions and proof submission for manual methods — you only need
+the auto-confirm path.
+
+---
+
+## Troubleshooting
+
+**"Open this app from inside Telegram."**
+You opened the Mini App in a browser tab. Open the bot instead.
+
+**"initData: invalid hash"**
+`TELEGRAM_BOT_TOKEN` doesn't match the bot that opened the app.
+
+**CORS error**
+`CLIENT_ORIGIN` on the server doesn't match the Vercel URL exactly.
+
+**Admin tab missing**
+Your Telegram ID isn't in `ADMIN_TELEGRAM_ID` and you haven't been
+invited.
+
+**Invite link doesn't promote**
+`/newapp` isn't configured in BotFather.
+
+**"Stripe is not configured on the server"**
+`STRIPE_SECRET_KEY` is missing or wrong. Set it and restart the server.
+
+**Stripe payments work but the order stays Pending**
+The webhook isn't reaching your server. Check Stripe → Developers →
+Webhooks → your endpoint → recent deliveries. Every event should show
+a 200 response. If they time out, your Render service may be sleeping.
+
+**Stars payment deducted but order still Pending**
+`getUpdates` on the bot may be swallowed by another webhook. Make sure
+no other process is polling the same bot token.
+
+**"Stock changed during checkout"**
+Another buyer got the last unit between your cart load and submission.
+Refresh and retry.
+
+**Receipt upload fails**
+Confirm the `receipts` bucket exists (migration 005) and is set to
+**private**. Check Supabase → Storage → receipts.
+
+**Missing environment variables on boot**
+Every var in `server/src/env.ts` is required unless marked optional.
+Check the Render logs.
+
+---
+
+## Runtime notes
+
+- **Server:** Bun recommended. Node 22.5+ works.
+- **Client:** any Node 20+.
+- **No file system, no cron, no queues.** All state lives in Supabase.
+
+---
+
+## License
+
+Commercial single-use. See `LICENSE`.
+
+Support: **swiss9.dev@gmail.com**
