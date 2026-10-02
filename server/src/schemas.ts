@@ -11,17 +11,33 @@ export const OrderItemInputSchema = z.object({
   quantity: z.number().int().min(1).max(99),
 });
 
+export const PAYMENT_METHODS = [
+  'manual',
+  'cod',
+  'bank',
+  'crypto',
+  'stars',
+  'stripe_link',
+] as const;
+
 export const OrderCreateSchema = z.object({
   items: z.array(OrderItemInputSchema).min(1).max(50),
   delivery: z.object({
     name: z.string().trim().min(1).max(120),
-    address: z.string().trim().min(1).max(240),
-    city: z.string().trim().min(1).max(120),
+    address: z.string().trim().max(240).default(''),
+    city: z.string().trim().max(120).default(''),
     zip: z.string().trim().max(20).optional().default(''),
   }),
-  payment_method: z.enum(['card', 'apple', 'cod']),
+  payment_method: z.enum(PAYMENT_METHODS),
 });
 export type OrderCreateInput = z.infer<typeof OrderCreateSchema>;
+
+export const ProofSubmitSchema = z.object({
+  note: z.string().trim().max(500).optional().default(''),
+  tx_hash: z.string().trim().max(200).optional().default(''),
+  proof_url: z.string().max(500).optional().default(''),
+});
+export type ProofSubmitInput = z.infer<typeof ProofSubmitSchema>;
 
 export const ProductCreateSchema = z.object({
   name: z.string().trim().min(1).max(160),
@@ -58,13 +74,23 @@ export const SettingsUpdateSchema = z.object({
   banner_cta: z.string().trim().max(40).optional(),
   banner_cta_action: z.enum(['all', 'category', 'search']).optional(),
   banner_color: z.enum(['mint', 'blue', 'pink', 'yellow', 'neutral']).optional(),
-  payment_provider: z.enum(['none', 'stripe_link', 'ton', 'custom']).optional(),
+  payment_provider: z.enum(PAYMENT_METHODS).optional(),
   payment_url: z.string().max(500).optional(),
   payment_ton_address: z.string().max(120).optional(),
   perks_enabled: z.boolean().optional(),
   perk_1_text: z.string().trim().max(80).optional(),
   perk_2_text: z.string().trim().max(80).optional(),
   perk_3_text: z.string().trim().max(80).optional(),
+  stars_enabled: z.boolean().optional(),
+  stars_rate: z.number().positive().max(10_000).optional(),
+  bank_enabled: z.boolean().optional(),
+  bank_details: z.string().max(2000).optional(),
+  crypto_enabled: z.boolean().optional(),
+  crypto_btc: z.string().max(200).optional(),
+  crypto_eth: z.string().max(200).optional(),
+  crypto_usdt_trc20: z.string().max(200).optional(),
+  crypto_ton: z.string().max(200).optional(),
+  stripe_enabled: z.boolean().optional(),
 });
 
 export const OrderStatusUpdateSchema = z.object({
