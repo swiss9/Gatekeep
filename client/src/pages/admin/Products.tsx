@@ -34,15 +34,8 @@ type FormState = {
 };
 
 const emptyForm = (): FormState => ({
-  name: '',
-  description: '',
-  price: '',
-  stock: '10',
-  category_id: '',
-  pastel_color: 'blue',
-  image_url: '',
-  active: true,
-  delivery_type: 'physical',
+  name: '', description: '', price: '', stock: '10', category_id: '',
+  pastel_color: 'blue', image_url: '', active: true, delivery_type: 'physical',
   digital_file_path: '',
 });
 
@@ -94,9 +87,8 @@ export function Products() {
       const url = await uploadProductImage(file);
       setForm((f) => ({ ...f, image_url: url }));
       toast('Image uploaded');
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Upload failed');
-    } finally { setUploading(false); }
+    } catch (err) { toast(err instanceof Error ? err.message : 'Upload failed'); }
+    finally { setUploading(false); }
   };
 
   const onDigitalFile = async (file: File) => {
@@ -105,9 +97,8 @@ export function Products() {
       const path = await uploadDigitalFile(file);
       setForm((f) => ({ ...f, digital_file_path: path }));
       toast('File uploaded');
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Upload failed');
-    } finally { setUploadingFile(false); }
+    } catch (err) { toast(err instanceof Error ? err.message : 'Upload failed'); }
+    finally { setUploadingFile(false); }
   };
 
   const save = async () => {
@@ -137,15 +128,12 @@ export function Products() {
       else { await api.createProduct({ ...body, name: form.name.trim(), price }); toast('Product published'); }
       setFormOpen(false);
       await load();
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Save failed');
-    } finally { setBusy(false); }
+    } catch (err) { toast(err instanceof Error ? err.message : 'Save failed'); }
+    finally { setBusy(false); }
   };
 
   const toggleActive = async (p: Product) => {
-    try {
-      await api.updateProduct(p.id, { active: !p.active });
-      await load();
+    try { await api.updateProduct(p.id, { active: !p.active }); await load();
       toast(p.active ? `“${p.name}” hidden` : `“${p.name}” visible`);
     } catch (err) { toast(err instanceof Error ? err.message : 'Update failed'); }
   };
@@ -227,9 +215,19 @@ export function Products() {
             {form.delivery_type === 'digital' && (
               <div className="field">
                 <label>Digital file</label>
-                <input type="file" onChange={(e) => { const f = e.target.files?.[0]; if (f) void onDigitalFile(f); }} disabled={uploadingFile} />
-                {form.digital_file_path && (
-                  <p className="muted" style={{ fontSize: 11.5, marginTop: 6 }}>File ready: {form.digital_file_path.slice(0, 12)}…</p>
+                {!form.digital_file_path ? (
+                  <input type="file" onChange={(e) => { const f = e.target.files?.[0]; if (f) void onDigitalFile(f); }} disabled={uploadingFile} />
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', border: '1px solid var(--line)', borderRadius: 10, background: 'var(--chip)' }}>
+                    <span className="muted" style={{ fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: "'JetBrains Mono', monospace" }}>
+                      {form.digital_file_path.slice(0, 40)}…
+                    </span>
+                    <button type="button" className="x-btn" aria-label="Remove file" onClick={() => setForm({ ...form, digital_file_path: '' })}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                        <path d="M6 6l12 12M18 6 6 18" />
+                      </svg>
+                    </button>
+                  </div>
                 )}
               </div>
             )}
@@ -268,8 +266,30 @@ export function Products() {
 
             <div className="field">
               <label>Cover image</label>
-              <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(e) => { const f = e.target.files?.[0]; if (f) void onImageFile(f); }} disabled={uploading} />
-              {form.image_url && <img src={form.image_url} alt="" style={{ marginTop: 8, borderRadius: 8, maxHeight: 120, objectFit: 'cover' }} />}
+              {!form.image_url ? (
+                <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(e) => { const f = e.target.files?.[0]; if (f) void onImageFile(f); }} disabled={uploading} />
+              ) : (
+                <div style={{ position: 'relative' }}>
+                  <img src={form.image_url} alt="" style={{ borderRadius: 8, maxHeight: 140, width: '100%', objectFit: 'cover' }} />
+                  <button
+                    type="button"
+                    className="x-btn"
+                    aria-label="Remove image"
+                    onClick={() => setForm({ ...form, image_url: '' })}
+                    style={{
+                      position: 'absolute',
+                      top: 8,
+                      right: 8,
+                      background: 'rgba(255,255,255,.9)',
+                      border: '1px solid var(--line)',
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                      <path d="M6 6l12 12M18 6 6 18" />
+                    </svg>
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="field" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
