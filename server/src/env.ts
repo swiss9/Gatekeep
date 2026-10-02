@@ -14,6 +14,10 @@ const EnvSchema = z.object({
 
   CLIENT_ORIGIN: z.string().url(),
   MINI_APP_URL: z.string().url(),
+
+  // Required only when Stripe Link is enabled. Signature verification
+  // uses this; without it the webhook route returns 503.
+  STRIPE_WEBHOOK_SECRET: z.string().min(16).optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
