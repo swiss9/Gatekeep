@@ -14,10 +14,12 @@ export function Settings() {
   const [savingPerks, setSavingPerks] = useState(false);
 
   useEffect(() => {
-    api.store()
+    api
+      .store()
       .then((s) => {
         const { id: _id, updated_at: _u, ...rest } = s.store;
-        void _id; void _u;
+        void _id;
+        void _u;
         setDraft(rest);
       })
       .catch((err: unknown) => toast(err instanceof Error ? err.message : 'Load failed'));
@@ -38,7 +40,8 @@ export function Settings() {
       });
       const { store } = await api.updateSettings(patch);
       const { id: _id, updated_at: _u, ...rest } = store;
-      void _id; void _u;
+      void _id;
+      void _u;
       setDraft(rest);
       toast(okMsg);
     } catch (err) {
@@ -49,10 +52,26 @@ export function Settings() {
   };
 
   const PROVIDERS: { id: PaymentProvider; label: string; hint: string }[] = [
-    { id: 'none', label: 'None', hint: 'No payment redirect. Orders sit in Pending payment.' },
-    { id: 'stripe_link', label: 'Stripe Payment Link', hint: 'Paste a Stripe Payment Link URL. order_code is appended.' },
-    { id: 'ton', label: 'TON Wallet', hint: 'Buyers pay to your TON address. order_code is the memo.' },
-    { id: 'custom', label: 'Custom URL', hint: 'Any URL. order and amount are appended as query params.' },
+    {
+      id: 'none',
+      label: 'None',
+      hint: 'No payment redirect. Orders sit in Pending payment until you confirm them manually.',
+    },
+    {
+      id: 'stripe_link',
+      label: 'Stripe Payment Link',
+      hint: 'Paste a Stripe Payment Link URL. The order code is appended as client_reference_id.',
+    },
+    {
+      id: 'ton',
+      label: 'TON Wallet',
+      hint: 'Buyers pay to your TON address. Requires pricing in TON — set the currency symbol to TON and price all products in TON. The order code is sent as the transaction memo.',
+    },
+    {
+      id: 'custom',
+      label: 'Custom URL',
+      hint: 'Any URL. order and amount are appended as query params.',
+    },
   ];
 
   return (
@@ -81,7 +100,18 @@ export function Settings() {
             <input type="number" min="0" step="0.5" value={draft.shipping_cost} onChange={(e) => setDraft({ ...draft, shipping_cost: Number(e.target.value) })} />
           </div>
         </div>
-        <button type="button" className="btn-primary" disabled={savingStore} onClick={() => save(['store_name','store_tagline','currency_symbol','shipping_threshold','shipping_cost'], setSavingStore, 'Store saved')}>
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={savingStore}
+          onClick={() =>
+            save(
+              ['store_name', 'store_tagline', 'currency_symbol', 'shipping_threshold', 'shipping_cost'],
+              setSavingStore,
+              'Store saved',
+            )
+          }
+        >
           {savingStore ? 'Saving…' : 'Save store'}
         </button>
       </div>
@@ -91,7 +121,9 @@ export function Settings() {
         <div className="field">
           <label>Provider</label>
           <select value={draft.payment_provider} onChange={(e) => setDraft({ ...draft, payment_provider: e.target.value as PaymentProvider })}>
-            {PROVIDERS.map((p) => (<option key={p.id} value={p.id}>{p.label}</option>))}
+            {PROVIDERS.map((p) => (
+              <option key={p.id} value={p.id}>{p.label}</option>
+            ))}
           </select>
           <p className="muted" style={{ fontSize: 11.5, marginTop: 6 }}>
             {PROVIDERS.find((p) => p.id === draft.payment_provider)?.hint}
@@ -115,7 +147,14 @@ export function Settings() {
             <input type="text" value={draft.payment_ton_address} onChange={(e) => setDraft({ ...draft, payment_ton_address: e.target.value })} placeholder="UQ..." />
           </div>
         )}
-        <button type="button" className="btn-primary" disabled={savingPayment} onClick={() => save(['payment_provider','payment_url','payment_ton_address'], setSavingPayment, 'Payments saved')}>
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={savingPayment}
+          onClick={() =>
+            save(['payment_provider', 'payment_url', 'payment_ton_address'], setSavingPayment, 'Payments saved')
+          }
+        >
           {savingPayment ? 'Saving…' : 'Save payments'}
         </button>
       </div>
@@ -126,7 +165,8 @@ export function Settings() {
           <label style={{ marginBottom: 0 }}>Show perks on product page</label>
           <label className="switch">
             <input type="checkbox" checked={draft.perks_enabled} onChange={(e) => setDraft({ ...draft, perks_enabled: e.target.checked })} />
-            <span className="track" /><span className="knob" />
+            <span className="track" />
+            <span className="knob" />
           </label>
         </div>
         {draft.perks_enabled && (
@@ -145,7 +185,14 @@ export function Settings() {
             </div>
           </>
         )}
-        <button type="button" className="btn-primary" disabled={savingPerks} onClick={() => save(['perks_enabled','perk_1_text','perk_2_text','perk_3_text'], setSavingPerks, 'Perks saved')}>
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={savingPerks}
+          onClick={() =>
+            save(['perks_enabled', 'perk_1_text', 'perk_2_text', 'perk_3_text'], setSavingPerks, 'Perks saved')
+          }
+        >
           {savingPerks ? 'Saving…' : 'Save perks'}
         </button>
       </div>
@@ -156,7 +203,8 @@ export function Settings() {
           <label style={{ marginBottom: 0 }}>Show banner</label>
           <label className="switch">
             <input type="checkbox" checked={draft.banner_enabled} onChange={(e) => setDraft({ ...draft, banner_enabled: e.target.checked })} />
-            <span className="track" /><span className="knob" />
+            <span className="track" />
+            <span className="knob" />
           </label>
         </div>
         <div className="field"><label>Eyebrow</label><input type="text" value={draft.banner_eyebrow} onChange={(e) => setDraft({ ...draft, banner_eyebrow: e.target.value })} /></div>
@@ -174,8 +222,13 @@ export function Settings() {
         <div className="field">
           <label>Banner color</label>
           <div className="swatches">
-            {(['mint','blue','pink','yellow','neutral'] as const).map((c) => {
-              const bg = c === 'mint' ? '#D1FAE5' : c === 'blue' ? '#E0F2FE' : c === 'pink' ? '#FCE7F3' : c === 'yellow' ? '#FEF3C7' : '#EEEFF1';
+            {(['mint', 'blue', 'pink', 'yellow', 'neutral'] as const).map((c) => {
+              const bg =
+                c === 'mint' ? '#D1FAE5'
+                : c === 'blue' ? '#E0F2FE'
+                : c === 'pink' ? '#FCE7F3'
+                : c === 'yellow' ? '#FEF3C7'
+                : '#EEEFF1';
               return (
                 <label key={c} className={`swatch${draft.banner_color === c ? ' sel' : ''}`} style={{ background: bg }}>
                   <input type="radio" name="banner-color" checked={draft.banner_color === c} onChange={() => setDraft({ ...draft, banner_color: c })} />
@@ -197,7 +250,18 @@ export function Settings() {
             onCta={() => undefined}
           />
         </div>
-        <button type="button" className="btn-primary" disabled={savingBanner} onClick={() => save(['banner_enabled','banner_eyebrow','banner_title','banner_subtitle','banner_cta','banner_cta_action','banner_color'], setSavingBanner, 'Banner saved')}>
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={savingBanner}
+          onClick={() =>
+            save(
+              ['banner_enabled', 'banner_eyebrow', 'banner_title', 'banner_subtitle', 'banner_cta', 'banner_cta_action', 'banner_color'],
+              setSavingBanner,
+              'Banner saved',
+            )
+          }
+        >
           {savingBanner ? 'Saving…' : 'Save banner'}
         </button>
       </div>
