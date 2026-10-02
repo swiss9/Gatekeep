@@ -6,6 +6,10 @@ import { HttpError } from './middleware/auth.js';
  * Lazy singleton. The SDK constructor throws if the key is missing, so
  * we defer construction until the first Stripe call. This lets a store
  * that doesn't use Stripe boot without STRIPE_SECRET_KEY.
+ *
+ * No `apiVersion` is passed — the SDK uses the version it was built
+ * against. Pinning by date means every SDK upgrade breaks the build
+ * until you bump the string. Let the SDK own it.
  */
 let client: Stripe | null = null;
 
@@ -18,7 +22,6 @@ function getClient(): Stripe {
     );
   }
   client = new Stripe(env.STRIPE_SECRET_KEY, {
-    apiVersion: '2024-10-28.acacia',
     typescript: true,
   });
   return client;
@@ -48,15 +51,6 @@ export type CreateCheckoutParams = {
   currencyCode: string;
 };
 
-/**
- * Creates a Stripe Checkout Session sized to the exact order total.
- * The URL returned here is a one-shot per-order payment page. When the
- * buyer pays, Stripe fires `checkout.session.completed` with our
- * client_reference_id = order_code, which the webhook turns into Paid.
- *
- * Success/cancel URLs point back at the Telegram bot deep link so the
- * buyer lands in the Mini App rather than a bare browser tab.
- */
 export async function createStripeCheckoutSession(
   params: CreateCheckoutParams,
 ): Promise<string> {
@@ -102,8 +96,6 @@ export async function createStripeCheckoutSession(
     },
     success_url: returnUrl,
     cancel_url: cancelUrl,
-    // Stripe's own expiry on the session. Matches our 24h framing
-    // elsewhere. Buyer who abandons has until this point to come back.
     expires_at: Math.floor(Date.now() / 1000) + 60 * 60 * 24,
   });
 
