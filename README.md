@@ -18,16 +18,72 @@ Built by **swiss9** · support: **swiss9.dev@gmail.com**
 - Two admin roles: superadmin (owner) and admin (staff)
 - One-time invite links to add admins via Telegram
 - Full schema with Row Level Security
+- **Six payment methods** — see below
 - Deploy guide for Render + Vercel
 
-## What's not included
+---
 
-**Payments.** The checkout creates the order and returns an `order_code`.
-You plug in your own payment provider after purchase — Stripe, TON,
-USDC, whatever you use. The hook point is documented in section 6.
+## Payment methods
 
-**Multi-item cart.** v1 checkout handles one product at a time.
-Multi-item is a v2 roadmap item.
+Out of the box, Gatekeep Shop supports six ways for buyers to pay.
+Everything is configured from **Admin → Settings → Payments**.
+
+| Method | Who confirms | Money goes to |
+|---|---|---|
+| **Telegram Stars** | Automatic (Telegram webhook) | Your Telegram wallet (withdraw as TON) |
+| **Card (Stripe)** | Automatic (Stripe webhook) | Your Stripe account |
+| **Bank transfer** | You, manually | Your bank account |
+| **Crypto** | You, manually | Your wallet addresses |
+| **Cash on Delivery** | You, manually | Cash on hand |
+| **Arrange with seller** | You, manually | Whatever you agree on |
+
+Every method except Stars and Stripe needs **one tap** from you when the
+money lands: open **Admin → Orders**, find the order, tap **Confirm paid**.
+The buyer gets a Telegram message the moment you do.
+
+### Telegram Stars
+
+Buyers pay inside Telegram with Stars. No setup beyond enabling it in
+Admin → Settings → Payments. Set the conversion rate (`Stars per $1`) to
+match the current exchange. Stars can be withdrawn as TON via BotFather.
+
+**Note:** Telegram restricts Stars to digital goods in most jurisdictions.
+For physical goods, prefer Stripe or bank transfer.
+
+### Card (Stripe)
+
+Real per-order Stripe Checkout Sessions. The buyer is redirected to a
+Stripe-hosted page sized to their exact cart total. On success, Stripe
+sends a webhook and the order is marked Paid automatically.
+
+**Setup:**
+
+1. Create a [Stripe account](https://stripe.com) and get your secret key
+   from Developers → API keys.
+2. Set `STRIPE_SECRET_KEY` on your server (Render → Environment).
+3. In Stripe → Developers → Webhooks → Add endpoint:
+   - **URL:** `https://your-service.onrender.com/api/payments/stripe/webhook`
+   - **Events:** `checkout.session.completed` and `checkout.session.expired`
+4. Copy the signing secret (`whsec_…`) into `STRIPE_WEBHOOK_SECRET`.
+5. In Admin → Settings → Store, set **Currency code** to match your
+   Stripe account (e.g. `usd`, `eur`, `gbp`).
+6. Enable Stripe in Admin → Settings → Payments.
+
+### Bank transfer / Crypto / Cash on Delivery / Arrange with seller
+
+Fill in the details once in Admin → Settings → Payments. Buyers see them
+on the confirmation screen with copy buttons. They upload a receipt or
+enter a tx hash, and you confirm paid from Admin → Orders.
+
+The receipt upload goes to a private Supabase bucket — only the buyer and
+your admins can view it.
+
+### What's NOT included
+
+No generic "custom URL" provider. Every payment flow needs its own
+confirmation contract, and a generic redirect leaves the order stuck in
+Pending forever. If you want a provider we don't ship, use the Stripe
+webhook route as a template — it's ~100 lines.
 
 ---
 
@@ -40,7 +96,10 @@ Editor, run these in order:
 
 1. `supabase/migrations/001_initial.sql`
 2. `supabase/migrations/002_admin_hierarchy.sql`
-3. `supabase/seed.sql` (optional — gives you 6 demo products)
+3. `supabase/migrations/003_grants.sql`
+4. `supabase/migrations/004_payments_and_digital.sql`
+5. `supabase/migrations/005_real_payments.sql`
+6. `supabase/seed.sql` (optional — 6 demo products)
 
 Copy four values from **Project Settings → API**:
 
@@ -51,11 +110,11 @@ Copy four values from **Project Settings → API**:
 
 ### 2. Telegram bot
 
-Message [@BotFather](https://t.me/BotFather), send `/newbot`, follow
-the prompts. Save the token and the bot username (without `@`).
+Message [@BotFather](https://t.me/BotFather), send `/newbot`, follow the
+prompts. Save the token and the bot username (without `@`).
 
-Then message [@userinfobot](https://t.me/userinfobot). Save the
-numeric `Id` — that's your `ADMIN_TELEGRAM_ID`.
+Then message [@userinfobot](https://t.me/userinfobot). Save the numeric
+`Id` — that's your `ADMIN_TELEGRAM_ID`.
 
 ### 3. Deploy the server (Render)
 
@@ -63,133 +122,7 @@ Push the repo to GitHub. On [render.com](https://render.com):
 
 - New Web Service → connect the repo
 - Root directory: `server`
-- Build: `bun install` (or `npm install`)
-- Start: `bun src/index.ts` (or `npm run start:node`)
-- Environment variables — copy from `server/.env.example` and fill in:
-VITE_API_URL=https://your-service.onrender.com
-VITE_SUPABASE_URL=...
-VITE_SUPABASE_ANON_KEY=...
-VITE_BOT_USERNAME=YourBotUsername
+- Build: `bun install`
+- Start: `bun src/index.ts`
 
-
-Deploy. Copy the Vercel URL.
-
-### 5. Close the loop
-
-Back on Render, update `CLIENT_ORIGIN` to your real Vercel URL and
-redeploy the server. This locks CORS to your client.
-
-### 6. Register the Mini App
-
-In [@BotFather](https://t.me/BotFather):
-
-- `/newapp` → pick the bot → set the Web App URL to your Vercel URL
-- Bot Settings → Menu Button → same URL
-
-Both must point at the same URL. Without this, invite links fail.
-
-### 7. First open
-
-Open the bot in Telegram, tap the menu button. You'll land in the
-storefront. The Admin tab is visible because your Telegram ID matches
-`ADMIN_TELEGRAM_ID`. Add a product, buy it yourself, check Admin →
-Orders.
-
-If that works, you're live.
-
----
-
-## Customizing
-
-Everything is done from **Admin** — no code changes.
-
-| What | Where |
-|---|---|
-| Store name, tagline, currency | Admin → Settings |
-| Free shipping threshold | Admin → Settings |
-| Home banner (text, color, on/off) | Admin → Settings |
-| Categories | Admin → Categories |
-| Products, images, stock | Admin → Products |
-| Order status | Admin → Orders |
-| Admins and invites | Admin → Team |
-
----
-
-## Team and roles
-
-Two roles:
-
-- **superadmin** — the owner. Full control, cannot be removed by anyone.
-- **admin** — staff. Can manage products, orders, settings. Cannot
-remove other admins.
-
-**Add an admin:** Team → Invite admin. A one-time link is copied.
-Send it. It expires in 48 hours and can be revoked.
-
-**Transfer ownership:** Team → Transfer on the target. You get demoted,
-they become superadmin. Then update `ADMIN_TELEGRAM_ID` on the server
-to their Telegram ID and redeploy. The env var always wins.
-
----
-
-## Adding payments
-
-The order is created by `POST /api/orders` and returned to the client
-with `order_code`, `total`, and `status: 'Processing'`. That's where
-you hook in.
-
-**Typical flow:**
-
-1. Client calls `POST /api/orders` and receives the order.
-2. Client redirects to your payment provider with `order_code` and `total`.
-3. Provider sends a webhook back to your server.
-4. Server flips `orders.status` to something like `'Paid'`.
-
-The Admin → Orders tab already supports status changes, so you can
-verify everything manually before building the webhook.
-
----
-
-## Troubleshooting
-
-**"Open this app from inside Telegram."**
-You opened it in a browser tab. Open the bot in Telegram.
-
-**"initData: invalid hash"**
-`TELEGRAM_BOT_TOKEN` doesn't match the bot that opened the Mini App.
-
-**CORS error**
-`CLIENT_ORIGIN` on the server doesn't match the deployed Vercel URL
-exactly (scheme + host, no trailing slash).
-
-**Admin tab missing**
-Your Telegram ID isn't in `ADMIN_TELEGRAM_ID`, or you haven't been
-invited.
-
-**Invite link doesn't promote**
-`/newapp` isn't configured in BotFather. The invite format requires the
-Main Mini App to be registered, not just the Menu Button.
-
-**"Stock changed during checkout"**
-Another buyer got the last unit between your cart load and your
-submission. Refresh and retry.
-
-**"Missing environment variables" on boot**
-One of the required vars is empty. Check the Render logs.
-
----
-
-## Runtime notes
-
-- **Server:** Bun recommended. Node 22.5+ works (uses
-`--experimental-strip-types`). Node 20 and older will not run.
-- **Client:** any Node 20+ for building.
-- **No file system, no cron, no queues.** All state lives in Supabase.
-
----
-
-## License
-
-Commercial single-use. See `LICENSE`. One license = one storefront.
-
-Support: **swiss9.dev@gmail.com**
+Add these environment variables:
