@@ -14,6 +14,28 @@ type State =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; product: ProductWithCategory; store: StoreSettings };
 
+const PERK_ICON = {
+  shipping: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 7h11v10H3zM14 10h4l3 3v4h-7z" />
+      <circle cx="7" cy="17.5" r="1.8" />
+      <circle cx="17.5" cy="17.5" r="1.8" />
+    </svg>
+  ),
+  returns: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 9a8 8 0 0 1 14.9-2M20 15a8 8 0 0 1-14.9 2" />
+      <path d="M18.5 3.5V7H15M5.5 20.5V17H9" />
+    </svg>
+  ),
+  secure: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3 4.5 6v5c0 4.6 3.2 8.2 7.5 10 4.3-1.8 7.5-5.4 7.5-10V6L12 3z" />
+      <path d="m9 11.5 2.2 2.2L15.5 9" />
+    </svg>
+  ),
+} as const;
+
 export function ProductDetail({ id }: Props) {
   const { back, navigate } = useRouter();
   const { wishlist, toggleWishlist, replace } = useCart();
@@ -26,7 +48,8 @@ export function ProductDetail({ id }: Props) {
     Promise.all([api.product(id), api.store(), api.categories()])
       .then(([p, s, c]) => {
         if (cancelled) return;
-        const categoryName = c.categories.find((cat) => cat.id === p.product.category_id)?.name ?? '—';
+        const categoryName =
+          c.categories.find((cat) => cat.id === p.product.category_id)?.name ?? '—';
         setState({
           kind: 'ready',
           product: { ...p.product, category_name: categoryName },
@@ -36,7 +59,10 @@ export function ProductDetail({ id }: Props) {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setState({ kind: 'error', message: err instanceof Error ? err.message : 'Failed to load.' });
+        setState({
+          kind: 'error',
+          message: err instanceof Error ? err.message : 'Failed to load.',
+        });
       });
     return () => {
       cancelled = true;
@@ -44,7 +70,11 @@ export function ProductDetail({ id }: Props) {
   }, [id]);
 
   if (state.kind === 'loading')
-    return <div className="screen cta-screen active"><div className="center-state">Loading…</div></div>;
+    return (
+      <div className="screen cta-screen active">
+        <div className="center-state">Loading…</div>
+      </div>
+    );
   if (state.kind === 'error')
     return (
       <div className="screen cta-screen active">
@@ -56,11 +86,17 @@ export function ProductDetail({ id }: Props) {
   const currency = store.currency_symbol;
   const isDigital = product.delivery_type === 'digital';
   const isNone = product.delivery_type === 'none';
-  // Digital files are always purchasable regardless of stock (stock is
-  // forced to 0 for digital in the admin form). Services ('none') too.
   const inStock = isNone || isDigital || product.stock > 0;
   const maxQty = isDigital || isNone ? 1 : Math.min(product.stock, 9);
   const saved = wishlist.has(product.id);
+
+  // Perks fix: build only from non-empty text. Blank fields render
+  // nothing; if all three are blank the whole block disappears.
+  const activePerks = [
+    { icon: PERK_ICON.shipping, text: store.perk_1_text },
+    { icon: PERK_ICON.returns, text: store.perk_2_text },
+    { icon: PERK_ICON.secure, text: store.perk_3_text },
+  ].filter((p) => p.text.trim().length > 0);
 
   return (
     <section className="screen cta-screen active">
@@ -122,30 +158,14 @@ export function ProductDetail({ id }: Props) {
         </div>
       )}
 
-      {store.perks_enabled && !isDigital && (
+      {store.perks_enabled && !isDigital && activePerks.length > 0 && (
         <div className="perks">
-          <div className="perk">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 7h11v10H3zM14 10h4l3 3v4h-7z" />
-              <circle cx="7" cy="17.5" r="1.8" />
-              <circle cx="17.5" cy="17.5" r="1.8" />
-            </svg>
-            {store.perk_1_text}
-          </div>
-          <div className="perk">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 9a8 8 0 0 1 14.9-2M20 15a8 8 0 0 1-14.9 2" />
-              <path d="M18.5 3.5V7H15M5.5 20.5V17H9" />
-            </svg>
-            {store.perk_2_text}
-          </div>
-          <div className="perk">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 3 4.5 6v5c0 4.6 3.2 8.2 7.5 10 4.3-1.8 7.5-5.4 7.5-10V6L12 3z" />
-              <path d="m9 11.5 2.2 2.2L15.5 9" />
-            </svg>
-            {store.perk_3_text}
-          </div>
+          {activePerks.map((p, i) => (
+            <div className="perk" key={i}>
+              {p.icon}
+              {p.text}
+            </div>
+          ))}
         </div>
       )}
 
