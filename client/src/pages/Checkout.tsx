@@ -79,7 +79,6 @@ export function Checkout() {
     return out;
   }, [store]);
 
-  // Pick a sane default once methods are known.
   useEffect(() => {
     if (method !== null) return;
     const first = availableMethods[0];
@@ -144,34 +143,27 @@ export function Checkout() {
         payment_method: method,
       });
       haptic('heavy');
+
+      // Navigate BEFORE clearing the cart so the empty-cart branch never
+      // renders while an external dialog is opening. The confirmation
+      // screen reloads the order from the server by code, so it does not
+      // depend on cart state.
+      navigate({ name: 'confirmation', orderCode: order.order_code });
       clear();
 
       if (payment.kind === 'stars') {
-        // Open Telegram's native Stars invoice. The order is only marked
-        // Paid server-side once Telegram confirms — so navigate straight
-        // away and let the confirmation screen poll.
-        openInvoice(payment.invoice_url, (status) => {
-          if (status === 'paid') {
-            navigate({ name: 'confirmation', orderCode: order.order_code });
-          } else if (status === 'cancelled' || status === 'failed') {
-            toast('Payment cancelled');
-            navigate({ name: 'confirmation', orderCode: order.order_code });
-          } else {
-            // pending — navigate anyway, confirmation polls.
-            navigate({ name: 'confirmation', orderCode: order.order_code });
-          }
+        openInvoice(payment.invoice_url, () => {
+          // Confirmation screen polls for status; nothing else to do here.
         });
         return;
       }
 
       if (payment.kind === 'stripe') {
         openExternalLink(payment.url);
-        navigate({ name: 'confirmation', orderCode: order.order_code });
         return;
       }
 
-      // bank / crypto / cod / manual / none — straight to instructions.
-      navigate({ name: 'confirmation', orderCode: order.order_code });
+      // bank / crypto / cod / manual — confirmation renders instructions.
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Order failed');
     } finally {
@@ -330,5 +322,5 @@ export function Checkout() {
   );
 }
 
-// Suppress unused import warnings in isolated TS builds.
-export { PAYMENT_METHOD_LABEL };
+// Keep the label map reachable if other screens import it from here.
+void PAYMENT_METHOD_LABEL;
