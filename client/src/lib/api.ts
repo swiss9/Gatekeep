@@ -178,8 +178,6 @@ export type ProductWriteBody = {
   digital_file_path?: string | null;
 };
 
-// --- Client-side validation, mirrors server/src/schemas.ts ---
-
 export const VALIDATION = {
   NAME_RE: /^[\p{L}][\p{L}\s'.\-]{1,79}$/u,
   ADDRESS_RE: /^(?=.*[\p{L}])(?=.*\d)[\p{L}\p{N}\s.,'#/\-]{4,239}$/u,
@@ -351,12 +349,13 @@ export const api = {
     request<{ ok: true }>(`/api/admin/invites/${id}`, { method: 'DELETE' }),
 };
 
-// --- Upload helpers (server-proxied) ---
+// --- Upload helpers (server-proxied + server-verified) ---
 
-const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const MAX_RECEIPT_BYTES = 8 * 1024 * 1024;
+
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
 const ALLOWED_DIGITAL_TYPES = [
   'application/pdf',
@@ -369,6 +368,12 @@ const ALLOWED_DIGITAL_TYPES = [
   'audio/mp4',
   'video/mp4',
 ];
+
+/**
+ * Receipt uploads accept only images. The server enforces this by
+ * verifying the file's magic bytes — a renaming or MIME spoof won't
+ * get through. Client checks are just for nicer error messages.
+ */
 const ALLOWED_RECEIPT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic'];
 
 async function uploadViaServer(
@@ -410,11 +415,12 @@ async function uploadViaServer(
 }
 
 export async function uploadProductImage(file: File): Promise<string> {
-  if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-    throw new ApiError(400, `Unsupported image type: ${file.type || 'unknown'}.`);
-  }
   if (file.size > MAX_IMAGE_BYTES) {
     throw new ApiError(400, `Image too large (max ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)}MB).`);
+  }
+  // Server verifies content. Client accept-list is defensive UX only.
+  if (file.type && !ALLOWED_IMAGE_TYPES.includes(file.type)) {
+    throw new ApiError(400, `Unsupported image type: ${file.type}.`);
   }
   const { public_url } = await uploadViaServer('products', file);
   if (!public_url) throw new ApiError(500, 'No public URL returned');
@@ -422,22 +428,22 @@ export async function uploadProductImage(file: File): Promise<string> {
 }
 
 export async function uploadDigitalFile(file: File): Promise<string> {
-  if (!ALLOWED_DIGITAL_TYPES.includes(file.type)) {
-    throw new ApiError(400, `Unsupported file type: ${file.type || 'unknown'}.`);
-  }
   if (file.size > MAX_FILE_BYTES) {
     throw new ApiError(400, `File too large (max ${Math.round(MAX_FILE_BYTES / 1024 / 1024)}MB).`);
+  }
+  if (file.type && !ALLOWED_DIGITAL_TYPES.includes(file.type)) {
+    throw new ApiError(400, `Unsupported file type: ${file.type}.`);
   }
   const { path } = await uploadViaServer('digital-goods', file);
   return path;
 }
 
 export async function uploadReceipt(file: File, orderId: string): Promise<string> {
-  if (!ALLOWED_RECEIPT_TYPES.includes(file.type)) {
-    throw new ApiError(400, `Unsupported image type: ${file.type || 'unknown'}.`);
-  }
   if (file.size > MAX_RECEIPT_BYTES) {
     throw new ApiError(400, `File too large (max ${Math.round(MAX_RECEIPT_BYTES / 1024 / 1024)}MB).`);
+  }
+  if (file.type && !ALLOWED_RECEIPT_TYPES.includes(file.type)) {
+    throw new ApiError(400, 'Receipt must be a JPG, PNG, WebP or HEIC image.');
   }
   const { path } = await uploadViaServer('receipts', file, { order_id: orderId });
   return path;
