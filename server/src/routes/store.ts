@@ -8,6 +8,7 @@ const FALLBACK: StoreSettings = {
   store_name: 'Gatekeep Shop',
   store_tagline: 'General Goods',
   currency_symbol: '$',
+  currency_code: 'usd',
   shipping_threshold: 60,
   shipping_cost: 6,
   banner_enabled: true,
