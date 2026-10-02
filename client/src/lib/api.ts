@@ -109,6 +109,7 @@ export type Order = {
   payment_proof_url: string | null;
   payment_proof_note: string | null;
   payment_tx_hash: string | null;
+  payment_proof_submitted_at: string | null;
   paid_confirmed_at: string | null;
   paid_confirmed_by: string | null;
   payment_redirect_url: string | null;
@@ -177,6 +178,20 @@ export type ProductWriteBody = {
   digital_file_path?: string | null;
 };
 
+// --- Client-side validation, mirrors server/src/schemas.ts ---
+
+export const VALIDATION = {
+  NAME_RE: /^[\p{L}][\p{L}\s'.\-]{1,79}$/u,
+  ADDRESS_RE: /^(?=.*[\p{L}])(?=.*\d)[\p{L}\p{N}\s.,'#/\-]{4,239}$/u,
+  CITY_RE: /^[\p{L}][\p{L}\s'\-]{1,79}$/u,
+  ZIP_RE: /^[\p{N}A-Za-z][\p{N}A-Za-z\s\-]{1,11}$/u,
+  TX_RE: /^(0x)?[A-Za-z0-9]{8,200}$/,
+  BTC_RE: /^(bc1|[13])[A-Za-z0-9]{25,62}$/,
+  ETH_RE: /^0x[a-fA-F0-9]{40}$/,
+  TRC20_RE: /^T[A-Za-z0-9]{33}$/,
+  TON_RE: /^(EQ|UQ|0:)[A-Za-z0-9_\-]{20,}$/,
+};
+
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) {
     super(message);
@@ -185,8 +200,6 @@ export class ApiError extends Error {
 }
 
 const BASE = import.meta.env.VITE_API_URL.replace(/\/+$/, '');
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL.replace(/\/+$/, '');
-const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 let token: string | null = null;
 
@@ -258,6 +271,11 @@ export const api = {
 
   myOrders: () => request<{ orders: Order[]; items: OrderItem[] }>('/api/orders/mine'),
 
+  orderDownloads: (id: string) =>
+    request<{ downloads: Array<{ product_name: string; signed_url: string }> }>(
+      `/api/orders/${id}/downloads`,
+    ),
+
   createOrder: (body: CreateOrderBody) =>
     request<{ order: Order; payment: PaymentPayload }>('/api/orders', {
       method: 'POST',
@@ -307,6 +325,7 @@ export const api = {
       revenue: number;
       orderCount: number;
       adminCount: number;
+      pendingConfirmations: number;
       recentOrders: Order[];
     }>('/api/admin/overview'),
 
@@ -332,6 +351,8 @@ export const api = {
     request<{ ok: true }>(`/api/admin/invites/${id}`, { method: 'DELETE' }),
 };
 
+// --- Upload helpers (server-proxied) ---
+
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
@@ -348,64 +369,77 @@ const ALLOWED_DIGITAL_TYPES = [
   'audio/mp4',
   'video/mp4',
 ];
-
 const ALLOWED_RECEIPT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic'];
 
-async function uploadToBucket(
+async function uploadViaServer(
+  bucket: 'products' | 'digital-goods' | 'receipts',
   file: File,
-  bucket: string,
-  path: string,
-  maxBytes: number,
-  allowed: string[],
-  upsert = false,
-): Promise<void> {
-  if (!allowed.includes(file.type)) {
-    throw new ApiError(400, `Unsupported file type: ${file.type || 'unknown'}.`);
-  }
-  if (file.size > maxBytes) {
-    throw new ApiError(400, `File too large (max ${Math.round(maxBytes / 1024 / 1024)}MB).`);
-  }
+  extra: Record<string, string> = {},
+): Promise<{ path: string; public_url: string | null }> {
   if (!token) throw new ApiError(401, 'Not authenticated.');
+  const fd = new FormData();
+  fd.append('file', file);
+  for (const [k, v] of Object.entries(extra)) fd.append(k, v);
 
-  const uploadUrl = `${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`;
-  const res = await fetch(uploadUrl, {
+  const res = await fetch(`${BASE}/api/uploads/${bucket}`, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      apikey: ANON_KEY,
-      'x-upsert': upsert ? 'true' : 'false',
-    },
-    body: file,
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
   });
 
-  if (!res.ok) throw new ApiError(res.status, 'Upload failed.');
+  const text = await res.text();
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = null;
+    }
+  }
+
+  if (!res.ok) {
+    const message =
+      data && typeof data === 'object' && 'error' in data &&
+      typeof (data as { error: unknown }).error === 'string'
+        ? (data as { error: string }).error
+        : 'Upload failed';
+    throw new ApiError(res.status, message);
+  }
+
+  return data as { path: string; public_url: string | null };
 }
 
 export async function uploadProductImage(file: File): Promise<string> {
-  const ext = (file.name.split('.').pop() ?? 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
-  const path = `${crypto.randomUUID()}.${ext}`;
-  await uploadToBucket(file, 'products', path, MAX_IMAGE_BYTES, ALLOWED_IMAGE_TYPES);
-  return `${SUPABASE_URL}/storage/v1/object/public/products/${path}`;
+  if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+    throw new ApiError(400, `Unsupported image type: ${file.type || 'unknown'}.`);
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    throw new ApiError(400, `Image too large (max ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)}MB).`);
+  }
+  const { public_url } = await uploadViaServer('products', file);
+  if (!public_url) throw new ApiError(500, 'No public URL returned');
+  return public_url;
 }
 
 export async function uploadDigitalFile(file: File): Promise<string> {
-  const ext = (file.name.split('.').pop() ?? 'bin').toLowerCase().replace(/[^a-z0-9]/g, '');
-  const path = `${crypto.randomUUID()}.${ext}`;
-  await uploadToBucket(file, 'digital-goods', path, MAX_FILE_BYTES, ALLOWED_DIGITAL_TYPES);
+  if (!ALLOWED_DIGITAL_TYPES.includes(file.type)) {
+    throw new ApiError(400, `Unsupported file type: ${file.type || 'unknown'}.`);
+  }
+  if (file.size > MAX_FILE_BYTES) {
+    throw new ApiError(400, `File too large (max ${Math.round(MAX_FILE_BYTES / 1024 / 1024)}MB).`);
+  }
+  const { path } = await uploadViaServer('digital-goods', file);
   return path;
 }
 
-export async function uploadReceipt(
-  file: File,
-  userId: string,
-  orderId: string,
-): Promise<string> {
-  const ext = (file.name.split('.').pop() ?? 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
-  const safeExt = ALLOWED_RECEIPT_TYPES.includes(file.type)
-    ? ext || 'jpg'
-    : 'jpg';
-  const path = `${userId}/${orderId}.${safeExt}`;
-  await uploadToBucket(file, 'receipts', path, MAX_RECEIPT_BYTES, ALLOWED_RECEIPT_TYPES, true);
+export async function uploadReceipt(file: File, orderId: string): Promise<string> {
+  if (!ALLOWED_RECEIPT_TYPES.includes(file.type)) {
+    throw new ApiError(400, `Unsupported image type: ${file.type || 'unknown'}.`);
+  }
+  if (file.size > MAX_RECEIPT_BYTES) {
+    throw new ApiError(400, `File too large (max ${Math.round(MAX_RECEIPT_BYTES / 1024 / 1024)}MB).`);
+  }
+  const { path } = await uploadViaServer('receipts', file, { order_id: orderId });
   return path;
 }
 
