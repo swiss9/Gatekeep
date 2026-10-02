@@ -13,29 +13,51 @@ export function haptic(style: 'light' | 'medium' | 'heavy' = 'light'): void {
 type WebApp = {
   openTelegramLink?: (url: string) => void;
   openLink?: (url: string) => void;
+  openInvoice?: (
+    url: string,
+    callback?: (status: string | { status: string }) => void,
+  ) => void;
 };
 
 function webApp(): WebApp | undefined {
   return window.Telegram?.WebApp as WebApp | undefined;
 }
 
-/**
- * t.me / telegram.me links only. Telegram rejects anything else with
- * this method. Use openExternalLink for everything else.
- */
+/** t.me / telegram.me links only. */
 export function openTelegramLink(url: string): void {
   const tg = webApp();
   if (tg?.openTelegramLink) tg.openTelegramLink(url);
   else window.open(url, '_blank', 'noopener,noreferrer');
 }
 
-/**
- * External URLs (Stripe, custom checkout, signed downloads). Uses
- * WebApp.openLink which opens in the in-app browser on mobile. Falls
- * back to window.open on desktop / browser.
- */
+/** External URLs (Stripe, custom checkout, signed downloads). */
 export function openExternalLink(url: string): void {
   const tg = webApp();
   if (tg?.openLink) tg.openLink(url);
   else window.open(url, '_blank', 'noopener,noreferrer');
+}
+
+export type InvoiceStatus = 'paid' | 'cancelled' | 'failed' | 'pending';
+
+export function normalizeInvoiceStatus(raw: string | { status: string } | undefined): InvoiceStatus {
+  const s = typeof raw === 'string' ? raw : raw?.status;
+  if (s === 'paid' || s === 'cancelled' || s === 'failed' || s === 'pending') return s;
+  return 'pending';
+}
+
+/**
+ * Opens a Telegram Stars invoice. The callback may receive either a
+ * string or an object depending on the WebApp SDK version — normalize
+ * both.
+ */
+export function openInvoice(
+  url: string,
+  onDone: (status: InvoiceStatus) => void,
+): void {
+  const tg = webApp();
+  if (!tg?.openInvoice) {
+    window.open(url, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  tg.openInvoice(url, (raw) => onDone(normalizeInvoiceStatus(raw)));
 }
