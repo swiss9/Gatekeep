@@ -89,7 +89,6 @@ create policy "digital_goods_admin_delete" on storage.objects
   for delete to authenticated
   using (bucket_id = 'digital-goods' and public.is_admin(auth.uid()));
 
--- ---------------------------------------------------------------------
--- Grant on the new bucket (RLS still gates, but grants must exist)
--- ---------------------------------------------------------------------
-grant all on all tables in schema public to anon, authenticated, service_role;
+-- No trailing GRANT here: 003_grants.sql grants on "all tables" and
+-- "default privileges" already cover anything created later. Adding a
+-- broad `grant all` here would undo the narrow scoping 003 establishes.
