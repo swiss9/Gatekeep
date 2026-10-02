@@ -112,6 +112,10 @@ export function Orders() {
             PAYMENT_METHOD_LABEL[o.payment_method as PaymentMethod] ?? o.payment_method;
           const canConfirm = o.status === 'Pending payment';
 
+          const hasAddress =
+            (o.customer_address && o.customer_address !== '—') ||
+            (o.customer_city && o.customer_city !== '—');
+
           return (
             <div className="order-card" key={o.id}>
               <div
@@ -120,13 +124,17 @@ export function Orders() {
                 onClick={() => setExpanded(isOpen ? null : o.id)}
               >
                 <span className="order-id">#{o.order_code}</span>
-                <span className={`status ${
-                  o.status === 'Delivered' ? 'mint'
-                  : o.status === 'Paid' ? 'mint'
-                  : o.status === 'Cancelled' ? 'red'
-                  : o.status === 'Pending payment' ? 'yellow'
-                  : 'blue'
-                }`}>
+                <span
+                  className={`status ${
+                    o.status === 'Delivered' || o.status === 'Paid'
+                      ? 'mint'
+                      : o.status === 'Cancelled'
+                        ? 'red'
+                        : o.status === 'Pending payment'
+                          ? 'yellow'
+                          : 'blue'
+                  }`}
+                >
                   {o.status}
                 </span>
               </div>
@@ -137,22 +145,25 @@ export function Orders() {
 
               {isOpen && (
                 <>
-                  <div className="muted" style={{ fontSize: 12.5, marginBottom: 10 }}>
-                    {o.customer_name}
-                    {o.customer_address && o.customer_address !== '—' && (
-                      <>
-                        <br />
-                        {o.customer_address}
-                      </>
-                    )}
-                    {o.customer_city && o.customer_city !== '—' && (
-                      <>
-                        <br />
-                        {o.customer_city}
-                        {o.customer_zip ? `, ${o.customer_zip}` : ''}
-                      </>
-                    )}
-                  </div>
+                  {hasAddress && (
+                    <div className="muted" style={{ fontSize: 12.5, marginBottom: 10 }}>
+                      {o.customer_address && o.customer_address !== '—'
+                        ? o.customer_address
+                        : null}
+                      {o.customer_address &&
+                        o.customer_address !== '—' &&
+                        o.customer_city &&
+                        o.customer_city !== '—' && <br />}
+                      {o.customer_city && o.customer_city !== '—'
+                        ? o.customer_city
+                        : null}
+                      {o.customer_city &&
+                        o.customer_city !== '—' &&
+                        o.customer_zip
+                        ? `, ${o.customer_zip}`
+                        : ''}
+                    </div>
+                  )}
 
                   <div style={{ marginBottom: 12 }}>
                     {orderItems.map((it) => (
@@ -167,7 +178,9 @@ export function Orders() {
                     ))}
                   </div>
 
-                  {(o.payment_proof_note || o.payment_tx_hash || o.payment_proof_signed_url) && (
+                  {(o.payment_proof_note ||
+                    o.payment_tx_hash ||
+                    o.payment_proof_signed_url) && (
                     <div
                       style={{
                         border: '1px solid var(--line)',
