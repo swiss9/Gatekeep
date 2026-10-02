@@ -3,7 +3,7 @@ import cors from '@fastify/cors';
 import { ZodError } from 'zod';
 import { env } from './env.js';
 import { HttpError } from './middleware/auth.js';
-import { startBot } from './bot.js';
+import { startBot, stopBot } from './bot.js';
 import { authRoutes } from './routes/auth.js';
 import { storeRoutes } from './routes/store.js';
 import { productRoutes } from './routes/products.js';
@@ -61,3 +61,21 @@ try {
   app.log.error(err);
   process.exit(1);
 }
+
+let shuttingDown = false;
+const shutdown = async (signal: string): Promise<void> => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  app.log.info(`received ${signal}, shutting down`);
+  stopBot();
+  try {
+    await app.close();
+    process.exit(0);
+  } catch (err) {
+    app.log.error(err);
+    process.exit(1);
+  }
+};
+
+process.on('SIGINT', () => void shutdown('SIGINT'));
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
