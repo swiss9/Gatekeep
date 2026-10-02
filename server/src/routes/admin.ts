@@ -55,10 +55,6 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     });
   });
 
-  /**
-   * Admin confirms money received (for bank / crypto / COD / manual).
-   * Only valid on a Pending payment order.
-   */
   app.post('/api/admin/orders/:id/confirm-paid', admin, async (req, reply) => {
     const me = currentProfile(req);
     const { id } = req.params as { id: string };
@@ -104,16 +100,6 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     return reply.send({ order: updated as Order });
   });
 
-  /**
-   * Marks a Pending order as Paid without any real payment. Used to
-   * verify the fulfillment pipeline (buyer notification, digital
-   * delivery, order status) before enabling live processors.
-   *
-   * Sets payment_simulated = true so this is distinguishable from a
-   * real confirmation in the audit trail. Otherwise behaves exactly
-   * like confirm-paid — the buyer gets the same message, and moving
-   * the order to Delivered later triggers the same digital delivery.
-   */
   app.post('/api/admin/orders/:id/simulate-paid', admin, async (req, reply) => {
     const me = currentProfile(req);
     const { id } = req.params as { id: string };
@@ -157,10 +143,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    console.log(
-      `[admin] order ${updated.order_code} marked paid as SIMULATION by ${me.id}`,
-    );
-
+    console.log(`[admin] order ${updated.order_code} marked paid as SIMULATION by ${me.id}`);
     return reply.send({ order: updated as Order });
   });
 
@@ -227,6 +210,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
             await deliverDigitalGood({
               telegramId: buyerTelegramId,
               orderCode: order.order_code,
+              orderId: order.id,
               productName: p.name,
               filePath: p.digital_file_path,
             });
@@ -258,6 +242,13 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       .select('id', { count: 'exact', head: true })
       .in('role', ['admin', 'superadmin']);
 
+    // Orders awaiting payment confirmation — Pending + proof submitted.
+    const { count: pendingConfirmations } = await supabaseAdmin
+      .from('orders')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'Pending payment')
+      .not('payment_proof_submitted_at', 'is', null);
+
     const { data: recent } = await supabaseAdmin
       .from('orders')
       .select('*')
@@ -268,6 +259,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       revenue,
       orderCount: rows.length,
       adminCount: adminCount ?? 0,
+      pendingConfirmations: pendingConfirmations ?? 0,
       recentOrders: (recent as Order[]) ?? [],
     });
   });
