@@ -6,7 +6,6 @@ import {
   type Order,
   type StoreSettings,
 } from '../lib/api';
-import { haptic } from '../lib/telegram';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useRouter } from '../App';
@@ -510,4 +509,4 @@ export function OrderConfirmation({ orderCode }: Props) {
       </button>
     </section>
   );
-                       }
+               }
