@@ -17,7 +17,7 @@ export const PAYMENT_METHODS = [
   'bank',
   'crypto',
   'stars',
-  'stripe_link',
+  'stripe',
 ] as const;
 
 export const OrderCreateSchema = z.object({
@@ -65,6 +65,7 @@ export const SettingsUpdateSchema = z.object({
   store_name: z.string().trim().min(1).max(80).optional(),
   store_tagline: z.string().trim().max(80).optional(),
   currency_symbol: z.string().trim().min(1).max(4).optional(),
+  currency_code: z.string().trim().toLowerCase().regex(/^[a-z]{3}$/).optional(),
   shipping_threshold: z.number().nonnegative().optional(),
   shipping_cost: z.number().nonnegative().optional(),
   banner_enabled: z.boolean().optional(),
