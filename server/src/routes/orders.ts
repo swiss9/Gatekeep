@@ -32,16 +32,9 @@ function buildPaymentPayload(
   stripeCheckoutUrl: string | null,
 ): PaymentPayload {
   if (!settings) return { kind: 'none' };
-
-  if (method === 'stars' && starsInvoiceUrl) {
-    return { kind: 'stars', invoice_url: starsInvoiceUrl };
-  }
-  if (method === 'stripe' && stripeCheckoutUrl) {
-    return { kind: 'stripe', url: stripeCheckoutUrl };
-  }
-  if (method === 'bank') {
-    return { kind: 'bank', details: settings.bank_details };
-  }
+  if (method === 'stars' && starsInvoiceUrl) return { kind: 'stars', invoice_url: starsInvoiceUrl };
+  if (method === 'stripe' && stripeCheckoutUrl) return { kind: 'stripe', url: stripeCheckoutUrl };
+  if (method === 'bank') return { kind: 'bank', details: settings.bank_details };
   if (method === 'crypto') {
     return {
       kind: 'crypto',
@@ -53,9 +46,7 @@ function buildPaymentPayload(
       },
     };
   }
-  if (method === 'cod') {
-    return { kind: 'cod' };
-  }
+  if (method === 'cod') return { kind: 'cod' };
   return { kind: 'none' };
 }
 
@@ -80,11 +71,60 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
     });
   });
 
+  /**
+   * Returns freshly-signed download URLs for digital items in an order
+   * the caller owns. Only issued once the order is Paid or beyond —
+   * unpaid orders cannot extract files.
+   */
+  app.get('/api/orders/:id/downloads', { preHandler: requireAuth }, async (req, reply) => {
+    const me = currentProfile(req);
+    const { id } = req.params as { id: string };
+
+    const { data: order } = await supabaseAdmin
+      .from('orders')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (!order) throw new HttpError(404, 'Order not found');
+    if (order.user_id !== me.id && me.role !== 'admin' && me.role !== 'superadmin') {
+      throw new HttpError(403, 'Not your order');
+    }
+    if (order.status === 'Pending payment' || order.status === 'Cancelled') {
+      throw new HttpError(403, 'Order is not paid yet');
+    }
+
+    const { data: items } = await supabaseAdmin
+      .from('order_items')
+      .select('*')
+      .eq('order_id', id);
+    const rows = (items as OrderItem[]) ?? [];
+
+    const productIds = rows.map((r) => r.product_id).filter((x): x is string => !!x);
+    const { data: products } = productIds.length
+      ? await supabaseAdmin.from('products').select('*').in('id', productIds)
+      : { data: [] as Product[] };
+    const byId = new Map(((products as Product[]) ?? []).map((p) => [p.id, p]));
+
+    const downloads: Array<{ product_name: string; signed_url: string }> = [];
+    for (const line of rows) {
+      if (!line.product_id) continue;
+      const p = byId.get(line.product_id);
+      if (!p || p.delivery_type !== 'digital' || !p.digital_file_path) continue;
+
+      const { data, error } = await supabaseAdmin.storage
+        .from('digital-goods')
+        .createSignedUrl(p.digital_file_path, 60 * 60 * 24);
+      if (error || !data?.signedUrl) continue;
+      downloads.push({ product_name: p.name, signed_url: data.signedUrl });
+    }
+
+    return reply.send({ downloads });
+  });
+
   app.post('/api/orders', { preHandler: requireAuth }, async (req, reply) => {
     const me = currentProfile(req);
     const body = OrderCreateSchema.parse(req.body);
 
-    // ---- Rate limit ----
     const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
     const { count: recentCount, error: rlErr } = await supabaseAdmin
       .from('orders')
@@ -96,7 +136,6 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       throw new HttpError(429, 'Too many orders. Try again in a bit.');
     }
 
-    // ---- Revalidate products ----
     const productIds = [...new Set(body.items.map((i) => i.product_id))];
     const { data: productsRaw, error: pErr } = await supabaseAdmin
       .from('products')
@@ -121,7 +160,6 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       throw new HttpError(400, 'Delivery address is required for physical items.');
     }
 
-    // ---- Settings ----
     const { data: settingsRow } = await supabaseAdmin
       .from('store_settings')
       .select('*')
@@ -138,9 +176,7 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       cod: true,
       manual: true,
     };
-    if (!enabled[method]) {
-      throw new HttpError(400, 'That payment method is not available.');
-    }
+    if (!enabled[method]) throw new HttpError(400, 'That payment method is not available.');
 
     const threshold = settings?.shipping_threshold ?? 60;
     const shipCost = settings?.shipping_cost ?? 6;
@@ -158,7 +194,6 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       throw new HttpError(400, 'Stripe cannot process a $0 order.');
     }
 
-    // ---- Insert order ----
     let order: Order | null = null;
     for (let attempt = 0; attempt < 3 && !order; attempt++) {
       const code = genOrderCode();
@@ -185,7 +220,6 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
     }
     if (!order) throw new HttpError(500, 'Could not generate a unique order code');
 
-    // ---- Insert line items ----
     const itemRows = body.items.map((line) => {
       const p = byId.get(line.product_id)!;
       return {
@@ -203,12 +237,6 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       throw new HttpError(500, `order_items failed: ${liErr.message}`);
     }
 
-    // ---- Payment handoff ----
-    // Build the external checkout URL BEFORE decrementing stock. If the
-    // upstream call fails we delete the order and no inventory has moved.
-    //
-    // We also persist the URL to orders.payment_redirect_url so the
-    // confirmation screen can offer a "re-open" button after a reload.
     let starsInvoiceUrl: string | null = null;
     let stripeCheckoutUrl: string | null = null;
 
@@ -254,7 +282,6 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
         .eq('id', order.id);
     }
 
-    // ---- Decrement stock for physical items ----
     for (const line of body.items) {
       const p = byId.get(line.product_id)!;
       if (p.delivery_type !== 'physical') continue;
@@ -272,7 +299,6 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    // ---- Notify admins ----
     notifyAdminsOfOrder({
       code: order.order_code,
       customer: order.customer_name,
@@ -290,51 +316,48 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send({ order, payment });
   });
 
-  // ---- Buyer submits proof of payment ----
-  app.post(
-    '/api/orders/:id/proof',
-    { preHandler: requireAuth },
-    async (req, reply) => {
-      const me = currentProfile(req);
-      const { id } = req.params as { id: string };
-      const body = ProofSubmitSchema.parse(req.body);
+  app.post('/api/orders/:id/proof', { preHandler: requireAuth }, async (req, reply) => {
+    const me = currentProfile(req);
+    const { id } = req.params as { id: string };
+    const body = ProofSubmitSchema.parse(req.body);
 
-      const { data: order } = await supabaseAdmin
-        .from('orders')
-        .select('*')
-        .eq('id', id)
-        .maybeSingle();
-      if (!order) throw new HttpError(404, 'Order not found');
-      if (order.user_id !== me.id) throw new HttpError(403, 'Not your order');
-      if (order.status !== 'Pending payment') {
-        throw new HttpError(409, 'This order is no longer awaiting payment.');
-      }
+    const { data: order } = await supabaseAdmin
+      .from('orders')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (!order) throw new HttpError(404, 'Order not found');
+    if (order.user_id !== me.id) throw new HttpError(403, 'Not your order');
+    if (order.status !== 'Pending payment') {
+      throw new HttpError(409, 'This order is no longer awaiting payment.');
+    }
 
-      const updates: Record<string, string | null> = {
-        payment_proof_note: body.note || null,
-        payment_tx_hash: body.tx_hash || null,
-        payment_proof_url: body.proof_url || null,
-      };
+    const now = new Date().toISOString();
+    const updates: Record<string, string | null> = {
+      payment_proof_note: body.note || null,
+      payment_tx_hash: body.tx_hash || null,
+      payment_proof_url: body.proof_url || null,
+      payment_proof_submitted_at: now,
+    };
 
-      const { data: updated, error } = await supabaseAdmin
-        .from('orders')
-        .update(updates)
-        .eq('id', id)
-        .select()
-        .single();
-      if (error || !updated) throw new HttpError(500, error?.message ?? 'update failed');
+    const { data: updated, error } = await supabaseAdmin
+      .from('orders')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+    if (error || !updated) throw new HttpError(500, error?.message ?? 'update failed');
 
-      notifyAdminsOfOrder({
-        code: updated.order_code,
-        customer: updated.customer_name,
-        city: updated.customer_city,
-        total: updated.total,
-        payment_method: `${updated.payment_method} · proof submitted`,
-      }).catch((err: unknown) => {
-        console.error('[orders] proof notify failed:', err);
-      });
+    notifyAdminsOfOrder({
+      code: updated.order_code,
+      customer: updated.customer_name,
+      city: updated.customer_city,
+      total: updated.total,
+      payment_method: `${updated.payment_method} · proof submitted`,
+    }).catch((err: unknown) => {
+      console.error('[orders] proof notify failed:', err);
+    });
 
-      return reply.send({ order: updated as Order });
-    },
-  );
+    return reply.send({ order: updated as Order });
+  });
 };
