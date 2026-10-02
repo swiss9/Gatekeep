@@ -10,8 +10,8 @@ import {
 
 const STATUS_CLASS: Record<OrderStatus, string> = {
   'Pending payment': 'yellow',
-  Paid: 'blue',
-  Processing: 'yellow',
+  Paid: 'mint',
+  Processing: 'blue',
   'In transit': 'blue',
   Delivered: 'mint',
   Cancelled: 'red',
@@ -48,8 +48,11 @@ export function Orders() {
   const filtered = useMemo(() => {
     if (state.kind !== 'ready') return [];
     if (filter === 'Active')
-      return state.orders.filter((o) => o.status !== 'Delivered' && o.status !== 'Cancelled');
-    if (filter === 'Delivered') return state.orders.filter((o) => o.status === 'Delivered');
+      return state.orders.filter(
+        (o) => o.status !== 'Delivered' && o.status !== 'Cancelled',
+      );
+    if (filter === 'Delivered')
+      return state.orders.filter((o) => o.status === 'Delivered');
     return state.orders;
   }, [state, filter]);
 
@@ -140,4 +143,4 @@ export function Orders() {
       )}
     </section>
   );
-                      }
+}
