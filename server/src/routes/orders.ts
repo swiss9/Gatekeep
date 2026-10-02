@@ -3,6 +3,7 @@ import { supabaseAdmin } from '../supabase.js';
 import { HttpError, requireAuth, currentProfile } from '../middleware/auth.js';
 import { OrderCreateSchema, ProofSubmitSchema } from '../schemas.js';
 import { notifyAdminsOfOrder, createStarsInvoiceLink } from '../bot.js';
+import { createStripeCheckoutSession } from '../stripe.js';
 import type { Order, OrderItem, Product, StoreSettings } from '../types.js';
 
 const RATE_LIMIT_PER_HOUR = 5;
@@ -27,20 +28,16 @@ type PaymentPayload =
 function buildPaymentPayload(
   settings: StoreSettings | null,
   method: string,
-  order: Order,
   starsInvoiceUrl: string | null,
+  stripeCheckoutUrl: string | null,
 ): PaymentPayload {
   if (!settings) return { kind: 'none' };
 
   if (method === 'stars' && starsInvoiceUrl) {
     return { kind: 'stars', invoice_url: starsInvoiceUrl };
   }
-  if (method === 'stripe_link' && settings.payment_url) {
-    const sep = settings.payment_url.includes('?') ? '&' : '?';
-    return {
-      kind: 'stripe',
-      url: `${settings.payment_url}${sep}client_reference_id=${encodeURIComponent(order.order_code)}`,
-    };
+  if (method === 'stripe' && stripeCheckoutUrl) {
+    return { kind: 'stripe', url: stripeCheckoutUrl };
   }
   if (method === 'bank') {
     return { kind: 'bank', details: settings.bank_details };
@@ -135,7 +132,7 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
     const method = body.payment_method;
     const enabled: Record<string, boolean> = {
       stars: !!settings?.stars_enabled,
-      stripe_link: !!settings?.stripe_enabled && !!settings?.payment_url,
+      stripe: !!settings?.stripe_enabled,
       bank: !!settings?.bank_enabled && !!settings?.bank_details.trim(),
       crypto: !!settings?.crypto_enabled,
       cod: true,
@@ -156,6 +153,10 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
     }
     const shipping = hasPhysical && subtotal < threshold ? shipCost : 0;
     const total = subtotal + shipping;
+
+    if (method === 'stripe' && total <= 0) {
+      throw new HttpError(400, 'Stripe cannot process a $0 order.');
+    }
 
     // ---- Insert order ----
     let order: Order | null = null;
@@ -202,11 +203,12 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       throw new HttpError(500, `order_items failed: ${liErr.message}`);
     }
 
-    // ---- Stars: create the invoice BEFORE touching stock ----
-    // If this fails we delete the order and no inventory has moved. If
-    // it succeeds but stock decrement later fails, we get an orphaned
-    // invoice the buyer never sees — harmless.
+    // ---- Payment handoff: build the external checkout URL BEFORE
+    //      touching stock. If the upstream call fails we delete the
+    //      order and no inventory has moved.
     let starsInvoiceUrl: string | null = null;
+    let stripeCheckoutUrl: string | null = null;
+
     if (method === 'stars' && settings) {
       const rate = settings.stars_rate > 0 ? settings.stars_rate : 77;
       const starsAmount = Math.max(1, Math.round(total * rate));
@@ -219,6 +221,25 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       if (!starsInvoiceUrl) {
         await supabaseAdmin.from('orders').delete().eq('id', order.id);
         throw new HttpError(502, 'Could not create Telegram Stars invoice. Try again.');
+      }
+    }
+
+    if (method === 'stripe' && settings) {
+      try {
+        stripeCheckoutUrl = await createStripeCheckoutSession({
+          orderCode: order.order_code,
+          orderId: order.id,
+          lines: body.items.map((line) => {
+            const p = byId.get(line.product_id)!;
+            return { name: p.name, unit_price: p.price, quantity: line.quantity };
+          }),
+          shipping,
+          currencyCode: settings.currency_code || 'usd',
+        });
+      } catch (err) {
+        await supabaseAdmin.from('orders').delete().eq('id', order.id);
+        const msg = err instanceof HttpError ? err.message : 'Stripe session failed.';
+        throw new HttpError(502, msg);
       }
     }
 
@@ -251,7 +272,7 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       console.error('[orders] admin notify failed:', err);
     });
 
-    const payment = buildPaymentPayload(settings, method, order, starsInvoiceUrl);
+    const payment = buildPaymentPayload(settings, method, starsInvoiceUrl, stripeCheckoutUrl);
 
     console.log(`[order] ${order.order_code} placed by ${me.id} method=${method} total=${total}`);
 
@@ -292,8 +313,6 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
         .single();
       if (error || !updated) throw new HttpError(500, error?.message ?? 'update failed');
 
-      // Ping admins that a receipt landed. Best-effort — a Telegram
-      // failure must not fail the buyer's submission.
       notifyAdminsOfOrder({
         code: updated.order_code,
         customer: updated.customer_name,
