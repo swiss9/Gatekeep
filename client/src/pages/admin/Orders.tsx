@@ -36,7 +36,7 @@ export function Orders() {
   const [currency, setCurrency] = useState('$');
   const [filter, setFilter] = useState<Filter>('All');
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
 
   const load = (f: Filter = filter) =>
     Promise.all([api.adminOrders(f === 'All' ? undefined : f), api.store()])
@@ -73,7 +73,7 @@ export function Orders() {
   };
 
   const confirmPaid = async (order: OrderWithReceipt) => {
-    setConfirming(order.id);
+    setBusy(order.id);
     try {
       await api.confirmOrderPaid(order.id);
       await load();
@@ -81,7 +81,26 @@ export function Orders() {
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Confirm failed');
     } finally {
-      setConfirming(null);
+      setBusy(null);
+    }
+  };
+
+  const simulatePaid = async (order: OrderWithReceipt) => {
+    const ok = window.confirm(
+      `Mark #${order.order_code} as paid WITHOUT any real payment?\n\n` +
+        `Use this only to test the fulfillment pipeline. The order will be ` +
+        `flagged as simulated in the audit trail.`,
+    );
+    if (!ok) return;
+    setBusy(order.id);
+    try {
+      await api.simulateOrderPaid(order.id);
+      await load();
+      toast('Simulated — buyer notified, order flagged as test');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Simulate failed');
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -111,6 +130,7 @@ export function Orders() {
           const methodLabel =
             PAYMENT_METHOD_LABEL[o.payment_method as PaymentMethod] ?? o.payment_method;
           const canConfirm = o.status === 'Pending payment';
+          const isBusy = busy === o.id;
 
           const hasAddress =
             (o.customer_address && o.customer_address !== '—') ||
@@ -123,7 +143,26 @@ export function Orders() {
                 style={{ cursor: 'pointer' }}
                 onClick={() => setExpanded(isOpen ? null : o.id)}
               >
-                <span className="order-id">#{o.order_code}</span>
+                <span className="order-id">
+                  #{o.order_code}
+                  {o.payment_simulated && (
+                    <span
+                      style={{
+                        marginLeft: 8,
+                        fontSize: 9.5,
+                        fontWeight: 800,
+                        letterSpacing: '0.08em',
+                        padding: '2px 6px',
+                        borderRadius: 999,
+                        background: 'var(--yellow)',
+                        color: '#78350F',
+                        verticalAlign: 'middle',
+                      }}
+                    >
+                      SIM
+                    </span>
+                  )}
+                </span>
                 <span
                   className={`status ${
                     o.status === 'Delivered' || o.status === 'Paid'
@@ -233,15 +272,35 @@ export function Orders() {
                   )}
 
                   {canConfirm && (
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      style={{ height: 44, fontSize: 14, marginBottom: 10 }}
-                      disabled={confirming === o.id}
-                      onClick={() => confirmPaid(o)}
-                    >
-                      {confirming === o.id ? 'Confirming…' : 'Confirm paid'}
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        style={{ height: 44, fontSize: 14, marginBottom: 8 }}
+                        disabled={isBusy}
+                        onClick={() => confirmPaid(o)}
+                      >
+                        {isBusy ? 'Working…' : 'Confirm paid'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => simulatePaid(o)}
+                        disabled={isBusy}
+                        style={{
+                          width: '100%',
+                          padding: '10px 12px',
+                          border: '1px dashed #B9BEC6',
+                          borderRadius: 12,
+                          background: 'transparent',
+                          fontSize: 12.5,
+                          fontWeight: 600,
+                          color: 'var(--muted)',
+                          marginBottom: 10,
+                        }}
+                      >
+                        Mark as simulated (for testing)
+                      </button>
+                    </>
                   )}
                 </>
               )}
