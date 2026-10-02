@@ -10,7 +10,13 @@ export type Profile = {
   created_at: string;
 };
 
-export type PaymentProvider = 'none' | 'stripe_link' | 'ton' | 'custom';
+export type PaymentProvider =
+  | 'manual'
+  | 'cod'
+  | 'bank'
+  | 'crypto'
+  | 'stars'
+  | 'stripe_link';
 
 export type StoreSettings = {
   id: 1;
@@ -33,6 +39,16 @@ export type StoreSettings = {
   perk_1_text: string;
   perk_2_text: string;
   perk_3_text: string;
+  stars_enabled: boolean;
+  stars_rate: number;
+  bank_enabled: boolean;
+  bank_details: string;
+  crypto_enabled: boolean;
+  crypto_btc: string;
+  crypto_eth: string;
+  crypto_usdt_trc20: string;
+  crypto_ton: string;
+  stripe_enabled: boolean;
   updated_at: string;
 };
 
@@ -86,6 +102,11 @@ export type Order = {
   total: number;
   payment_confirmed_at: string | null;
   delivered_at: string | null;
+  payment_proof_url: string | null;
+  payment_proof_note: string | null;
+  payment_tx_hash: string | null;
+  paid_confirmed_at: string | null;
+  paid_confirmed_by: string | null;
   created_at: string;
 };
 
