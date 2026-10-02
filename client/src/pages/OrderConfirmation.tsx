@@ -15,12 +15,12 @@ export function OrderConfirmation({ orderCode }: Props) {
         </div>
         <span className="eyebrow muted">Order received</span>
         <h2 className="h-display" style={{ fontSize: 26, marginTop: 6 }}>
-          Order confirmed
+          Order placed
         </h2>
         <span className="success-id">#{orderCode}</span>
         <p className="msg">
-          We'll message you on Telegram once your order is confirmed. For digital
-          goods, your download link arrives the moment the admin approves.
+          We'll message you on Telegram once your order is confirmed. Digital
+          goods are delivered the moment the admin marks your order as Delivered.
         </p>
         <button type="button" className="btn-primary" onClick={() => navigate({ name: 'shop' })}>
           Continue shopping
