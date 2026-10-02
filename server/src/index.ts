@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
+import multipart from '@fastify/multipart';
 import { ZodError } from 'zod';
 import { env } from './env.js';
 import { HttpError } from './middleware/auth.js';
@@ -9,6 +10,7 @@ import { storeRoutes } from './routes/store.js';
 import { productRoutes } from './routes/products.js';
 import { categoryRoutes } from './routes/categories.js';
 import { orderRoutes } from './routes/orders.js';
+import { uploadRoutes } from './routes/uploads.js';
 import { paymentRoutes } from './routes/payments.js';
 import { adminRoutes } from './routes/admin.js';
 import { teamRoutes } from './routes/team.js';
@@ -19,8 +21,6 @@ async function build(): Promise<FastifyInstance> {
     trustProxy: true,
   });
 
-  // Preserve the raw JSON body for webhook signature verification.
-  // Fastify's built-in JSON parser would discard it otherwise.
   app.addContentTypeParser(
     'application/json',
     { parseAs: 'buffer' },
@@ -33,6 +33,10 @@ async function build(): Promise<FastifyInstance> {
       }
     },
   );
+
+  await app.register(multipart, {
+    limits: { fileSize: 50 * 1024 * 1024, files: 1 },
+  });
 
   await app.register(cors, {
     origin: env.NODE_ENV === 'production' ? env.CLIENT_ORIGIN : true,
@@ -61,6 +65,7 @@ async function build(): Promise<FastifyInstance> {
   await app.register(productRoutes);
   await app.register(categoryRoutes);
   await app.register(orderRoutes);
+  await app.register(uploadRoutes);
   await app.register(paymentRoutes);
   await app.register(adminRoutes);
   await app.register(teamRoutes);
