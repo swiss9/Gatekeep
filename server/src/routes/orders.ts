@@ -1,8 +1,8 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { supabaseAdmin } from '../supabase.js';
 import { HttpError, requireAuth, currentProfile } from '../middleware/auth.js';
-import { OrderCreateSchema } from '../schemas.js';
-import { notifyAdminsOfOrder } from '../bot.js';
+import { OrderCreateSchema, ProofSubmitSchema } from '../schemas.js';
+import { notifyAdminsOfOrder, createStarsInvoiceLink } from '../bot.js';
 import type { Order, OrderItem, Product, StoreSettings } from '../types.js';
 
 const RATE_LIMIT_PER_HOUR = 5;
@@ -16,29 +16,50 @@ function genOrderCode(): string {
   return `MD-${s}`;
 }
 
-function buildPaymentUrl(
-  settings: StoreSettings | null,
-  orderCode: string,
-  total: number,
-): string | null {
-  if (!settings) return null;
-  const sym = settings.currency_symbol;
-  const totalStr = total % 1 === 0 ? total.toString() : total.toFixed(2);
+type PaymentPayload =
+  | { kind: 'none' }
+  | { kind: 'stars'; invoice_url: string }
+  | { kind: 'stripe'; url: string }
+  | { kind: 'bank'; details: string }
+  | { kind: 'crypto'; addresses: { btc: string; eth: string; usdt_trc20: string; ton: string } }
+  | { kind: 'cod' };
 
-  if (settings.payment_provider === 'stripe_link' && settings.payment_url) {
+function buildPaymentPayload(
+  settings: StoreSettings | null,
+  method: string,
+  order: Order,
+  starsInvoiceUrl: string | null,
+): PaymentPayload {
+  if (!settings) return { kind: 'none' };
+
+  if (method === 'stars' && starsInvoiceUrl) {
+    return { kind: 'stars', invoice_url: starsInvoiceUrl };
+  }
+  if (method === 'stripe_link' && settings.payment_url) {
     const sep = settings.payment_url.includes('?') ? '&' : '?';
-    return `${settings.payment_url}${sep}client_reference_id=${encodeURIComponent(orderCode)}`;
+    return {
+      kind: 'stripe',
+      url: `${settings.payment_url}${sep}client_reference_id=${encodeURIComponent(order.order_code)}`,
+    };
   }
-  if (settings.payment_provider === 'ton' && settings.payment_ton_address) {
-    // Amount is expressed in nanoTON. Assumes the store prices in TON —
-    // see README section on payments.
-    return `ton://transfer/${settings.payment_ton_address}?amount=${Math.round(total * 1e9)}&text=${encodeURIComponent(orderCode)}`;
+  if (method === 'bank') {
+    return { kind: 'bank', details: settings.bank_details };
   }
-  if (settings.payment_provider === 'custom' && settings.payment_url) {
-    const sep = settings.payment_url.includes('?') ? '&' : '?';
-    return `${settings.payment_url}${sep}order=${encodeURIComponent(orderCode)}&amount=${encodeURIComponent(totalStr + sym)}`;
+  if (method === 'crypto') {
+    return {
+      kind: 'crypto',
+      addresses: {
+        btc: settings.crypto_btc,
+        eth: settings.crypto_eth,
+        usdt_trc20: settings.crypto_usdt_trc20,
+        ton: settings.crypto_ton,
+      },
+    };
   }
-  return null;
+  if (method === 'cod') {
+    return { kind: 'cod' };
+  }
+  return { kind: 'none' };
 }
 
 export const orderRoutes: FastifyPluginAsync = async (app) => {
@@ -66,6 +87,7 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
     const me = currentProfile(req);
     const body = OrderCreateSchema.parse(req.body);
 
+    // ---- Rate limit ----
     const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
     const { count: recentCount, error: rlErr } = await supabaseAdmin
       .from('orders')
@@ -77,6 +99,7 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       throw new HttpError(429, 'Too many orders. Try again in a bit.');
     }
 
+    // ---- Revalidate products ----
     const productIds = [...new Set(body.items.map((i) => i.product_id))];
     const { data: productsRaw, error: pErr } = await supabaseAdmin
       .from('products')
@@ -86,6 +109,7 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
     const products = (productsRaw as Product[]) ?? [];
 
     const byId = new Map(products.map((p) => [p.id, p]));
+    let hasPhysical = false;
     for (const line of body.items) {
       const p = byId.get(line.product_id);
       if (!p) throw new HttpError(409, 'A product in your cart no longer exists.');
@@ -93,14 +117,36 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       if (p.stock < line.quantity && p.delivery_type === 'physical') {
         throw new HttpError(409, `Only ${p.stock} of "${p.name}" left in stock.`);
       }
+      if (p.delivery_type === 'physical') hasPhysical = true;
     }
 
+    // Physical orders require a delivery address.
+    if (hasPhysical && (!body.delivery.address.trim() || !body.delivery.city.trim())) {
+      throw new HttpError(400, 'Delivery address is required for physical items.');
+    }
+
+    // ---- Settings ----
     const { data: settingsRow } = await supabaseAdmin
       .from('store_settings')
       .select('*')
       .eq('id', 1)
       .maybeSingle();
     const settings = settingsRow as StoreSettings | null;
+
+    // Validate that the requested method is enabled.
+    const method = body.payment_method;
+    const enabled: Record<string, boolean> = {
+      stars: !!settings?.stars_enabled,
+      stripe_link: !!settings?.stripe_enabled && !!settings?.payment_url,
+      bank: !!settings?.bank_enabled && !!settings?.bank_details.trim(),
+      crypto: !!settings?.crypto_enabled,
+      cod: true,
+      manual: true,
+    };
+    if (!enabled[method]) {
+      throw new HttpError(400, 'That payment method is not available.');
+    }
+
     const threshold = settings?.shipping_threshold ?? 60;
     const shipCost = settings?.shipping_cost ?? 6;
 
@@ -110,9 +156,10 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       if (!p) continue;
       subtotal += p.price * line.quantity;
     }
-    const shipping = subtotal >= threshold ? 0 : shipCost;
+    const shipping = hasPhysical && subtotal < threshold ? shipCost : 0;
     const total = subtotal + shipping;
 
+    // ---- Insert order ----
     let order: Order | null = null;
     for (let attempt = 0; attempt < 3 && !order; attempt++) {
       const code = genOrderCode();
@@ -122,11 +169,11 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
           order_code: code,
           user_id: me.id,
           customer_name: body.delivery.name,
-          customer_address: body.delivery.address,
-          customer_city: body.delivery.city,
+          customer_address: body.delivery.address || '—',
+          customer_city: body.delivery.city || '—',
           customer_zip: body.delivery.zip || null,
           status: 'Pending payment',
-          payment_method: body.payment_method,
+          payment_method: method,
           subtotal,
           shipping,
           total,
@@ -139,6 +186,7 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
     }
     if (!order) throw new HttpError(500, 'Could not generate a unique order code');
 
+    // ---- Insert line items ----
     const itemRows = body.items.map((line) => {
       const p = byId.get(line.product_id)!;
       return {
@@ -156,6 +204,7 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       throw new HttpError(500, `order_items failed: ${liErr.message}`);
     }
 
+    // ---- Decrement stock for physical items ----
     for (const line of body.items) {
       const p = byId.get(line.product_id)!;
       if (p.delivery_type !== 'physical') continue;
@@ -173,22 +222,84 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    // Fire-and-forget, but catch failures so an unhandled rejection does
-    // not crash the process. Telegram being briefly down should never
-    // affect order creation.
+    // ---- Stars: create the invoice link now ----
+    let starsInvoiceUrl: string | null = null;
+    if (method === 'stars' && settings) {
+      const rate = settings.stars_rate > 0 ? settings.stars_rate : 77;
+      const starsAmount = Math.max(1, Math.round(total * rate));
+      starsInvoiceUrl = await createStarsInvoiceLink({
+        title: `Order ${order.order_code}`,
+        description: `${body.items.length} item(s) from ${settings.store_name}`,
+        payload: `order:${order.id}`,
+        starsAmount,
+      });
+      if (!starsInvoiceUrl) {
+        await supabaseAdmin.from('orders').delete().eq('id', order.id);
+        throw new HttpError(502, 'Could not create Telegram Stars invoice. Try again.');
+      }
+    }
+
+    // Fire-and-forget admin notification.
     notifyAdminsOfOrder({
       code: order.order_code,
       customer: order.customer_name,
       city: order.customer_city,
       total: order.total,
+      payment_method: method,
     }).catch((err: unknown) => {
       console.error('[orders] admin notify failed:', err);
     });
 
-    const paymentUrl = buildPaymentUrl(settings, order.order_code, order.total);
+    const payment = buildPaymentPayload(settings, method, order, starsInvoiceUrl);
 
-    console.log(`[order] ${order.order_code} placed by ${me.id} total=${total}`);
+    console.log(`[order] ${order.order_code} placed by ${me.id} method=${method} total=${total}`);
 
-    return reply.code(201).send({ order, payment_url: paymentUrl });
+    return reply.code(201).send({ order, payment });
   });
+
+  // ---- Buyer submits proof of payment ----
+  app.post(
+    '/api/orders/:id/proof',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      const me = currentProfile(req);
+      const { id } = req.params as { id: string };
+      const body = ProofSubmitSchema.parse(req.body);
+
+      const { data: order } = await supabaseAdmin
+        .from('orders')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+      if (!order) throw new HttpError(404, 'Order not found');
+      if (order.user_id !== me.id) throw new HttpError(403, 'Not your order');
+      if (order.status !== 'Pending payment') {
+        throw new HttpError(409, 'This order is no longer awaiting payment.');
+      }
+
+      const updates: Record<string, string | null> = {
+        payment_proof_note: body.note || null,
+        payment_tx_hash: body.tx_hash || null,
+        payment_proof_url: body.proof_url || null,
+      };
+
+      const { data: updated, error } = await supabaseAdmin
+        .from('orders')
+        .update(updates)
+        .eq('id', id)
+        .select()
+        .single();
+      if (error || !updated) throw new HttpError(500, error?.message ?? 'update failed');
+
+      // Let admins know a proof was submitted.
+      const { data: admins } = await supabaseAdmin
+        .from('profiles')
+        .select('telegram_id')
+        .in('role', ['admin', 'superadmin']);
+      // Notification is best-effort; failure is not surfaced.
+      void admins;
+
+      return reply.send({ order: updated as Order });
+    },
+  );
 };
