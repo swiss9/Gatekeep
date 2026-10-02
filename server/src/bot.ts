@@ -163,16 +163,25 @@ export async function notifyAdminsOfOrder(order: {
 // Buyer notifications
 // ---------------------------------------------------------------------
 
+/**
+ * Sends a "your order is ready" ping to the buyer. Swallows its own
+ * errors: a blocked bot or deleted account must never fail the admin's
+ * status-update request.
+ */
 export async function notifyBuyerOfDelivery(params: {
   telegramId: number;
   orderCode: string;
 }): Promise<void> {
   const { store_name } = await loadSettings();
-  await sendMessage(
-    params.telegramId,
-    `<b>Your order is ready</b>\n\nOrder #${params.orderCode} from ${store_name}. Tap below to view.`,
-    webAppButton('View order'),
-  );
+  try {
+    await sendMessage(
+      params.telegramId,
+      `<b>Your order is ready</b>\n\nOrder #${params.orderCode} from ${store_name}. Tap below to view.`,
+      webAppButton('View order'),
+    );
+  } catch (err) {
+    console.error('[bot] buyer notify failed:', err);
+  }
 }
 
 export async function deliverDigitalGood(params: {
