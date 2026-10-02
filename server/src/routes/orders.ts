@@ -120,7 +120,6 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       if (p.delivery_type === 'physical') hasPhysical = true;
     }
 
-    // Physical orders require a delivery address.
     if (hasPhysical && (!body.delivery.address.trim() || !body.delivery.city.trim())) {
       throw new HttpError(400, 'Delivery address is required for physical items.');
     }
@@ -133,7 +132,6 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       .maybeSingle();
     const settings = settingsRow as StoreSettings | null;
 
-    // Validate that the requested method is enabled.
     const method = body.payment_method;
     const enabled: Record<string, boolean> = {
       stars: !!settings?.stars_enabled,
@@ -204,6 +202,26 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       throw new HttpError(500, `order_items failed: ${liErr.message}`);
     }
 
+    // ---- Stars: create the invoice BEFORE touching stock ----
+    // If this fails we delete the order and no inventory has moved. If
+    // it succeeds but stock decrement later fails, we get an orphaned
+    // invoice the buyer never sees — harmless.
+    let starsInvoiceUrl: string | null = null;
+    if (method === 'stars' && settings) {
+      const rate = settings.stars_rate > 0 ? settings.stars_rate : 77;
+      const starsAmount = Math.max(1, Math.round(total * rate));
+      starsInvoiceUrl = await createStarsInvoiceLink({
+        title: `Order ${order.order_code}`,
+        description: `${body.items.length} item(s) from ${settings.store_name}`,
+        payload: `order:${order.id}`,
+        starsAmount,
+      });
+      if (!starsInvoiceUrl) {
+        await supabaseAdmin.from('orders').delete().eq('id', order.id);
+        throw new HttpError(502, 'Could not create Telegram Stars invoice. Try again.');
+      }
+    }
+
     // ---- Decrement stock for physical items ----
     for (const line of body.items) {
       const p = byId.get(line.product_id)!;
@@ -222,24 +240,7 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    // ---- Stars: create the invoice link now ----
-    let starsInvoiceUrl: string | null = null;
-    if (method === 'stars' && settings) {
-      const rate = settings.stars_rate > 0 ? settings.stars_rate : 77;
-      const starsAmount = Math.max(1, Math.round(total * rate));
-      starsInvoiceUrl = await createStarsInvoiceLink({
-        title: `Order ${order.order_code}`,
-        description: `${body.items.length} item(s) from ${settings.store_name}`,
-        payload: `order:${order.id}`,
-        starsAmount,
-      });
-      if (!starsInvoiceUrl) {
-        await supabaseAdmin.from('orders').delete().eq('id', order.id);
-        throw new HttpError(502, 'Could not create Telegram Stars invoice. Try again.');
-      }
-    }
-
-    // Fire-and-forget admin notification.
+    // ---- Notify admins ----
     notifyAdminsOfOrder({
       code: order.order_code,
       customer: order.customer_name,
@@ -291,13 +292,17 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
         .single();
       if (error || !updated) throw new HttpError(500, error?.message ?? 'update failed');
 
-      // Let admins know a proof was submitted.
-      const { data: admins } = await supabaseAdmin
-        .from('profiles')
-        .select('telegram_id')
-        .in('role', ['admin', 'superadmin']);
-      // Notification is best-effort; failure is not surfaced.
-      void admins;
+      // Ping admins that a receipt landed. Best-effort — a Telegram
+      // failure must not fail the buyer's submission.
+      notifyAdminsOfOrder({
+        code: updated.order_code,
+        customer: updated.customer_name,
+        city: updated.customer_city,
+        total: updated.total,
+        payment_method: `${updated.payment_method} · proof submitted`,
+      }).catch((err: unknown) => {
+        console.error('[orders] proof notify failed:', err);
+      });
 
       return reply.send({ order: updated as Order });
     },
