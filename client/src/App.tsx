@@ -16,6 +16,7 @@ import { OrderConfirmation } from './pages/OrderConfirmation';
 import { Orders } from './pages/Orders';
 import { Admin, type AdminTab } from './pages/Admin';
 import { BottomNav, type Tab } from './components/BottomNav';
+import { getStartParam } from './lib/telegram';
 
 export type Route =
   | { name: 'shop' }
@@ -59,6 +60,36 @@ function RouterProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return <Ctx.Provider value={{ route, navigate, back }}>{children}</Ctx.Provider>;
+}
+
+/**
+ * Detects deep-link returns from external payment providers. Stripe
+ * redirects the buyer to t.me/<bot>?startapp=paid_<orderCode>, which
+ * Telegram passes to initData as start_param. Once auth is ready we
+ * route straight to the confirmation screen for that order.
+ */
+function DeepLinkHandler() {
+  const { navigate } = useRouter();
+  const auth = useAuth();
+
+  useEffect(() => {
+    if (auth.status !== 'ready') return;
+    const sp = getStartParam();
+    if (!sp) return;
+
+    const paidMatch = /^paid_(.+)$/.exec(sp);
+    const cancelledMatch = /^cancelled_(.+)$/.exec(sp);
+    const code = paidMatch?.[1] ?? cancelledMatch?.[1];
+    if (!code) return;
+
+    navigate({ name: 'confirmation', orderCode: code });
+    // Clear the start_param so a subsequent remount doesn't re-fire.
+    if (window.Telegram?.WebApp?.initDataUnsafe) {
+      window.Telegram.WebApp.initDataUnsafe.start_param = undefined;
+    }
+  }, [auth, navigate]);
+
+  return null;
 }
 
 function Screens() {
@@ -123,6 +154,7 @@ function Shell() {
 
   return (
     <div className="app">
+      <DeepLinkHandler />
       <Screens />
       <Nav />
     </div>
