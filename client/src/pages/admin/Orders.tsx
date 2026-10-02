@@ -10,7 +10,15 @@ const STATUSES: OrderStatus[] = [
   'Delivered',
   'Cancelled',
 ];
-const FILTERS = ['All', 'Pending payment', 'Paid', 'Processing', 'Delivered', 'Cancelled'] as const;
+const FILTERS = [
+  'All',
+  'Pending payment',
+  'Paid',
+  'Processing',
+  'In transit',
+  'Delivered',
+  'Cancelled',
+] as const;
 type Filter = (typeof FILTERS)[number];
 
 export function Orders() {
@@ -30,7 +38,10 @@ export function Orders() {
       })
       .catch((err: unknown) => toast(err instanceof Error ? err.message : 'Load failed'));
 
-  useEffect(() => { void load(filter); /* eslint-disable-next-line */ }, [filter]);
+  useEffect(() => {
+    void load(filter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter]);
 
   const itemsByOrder = useMemo(() => {
     const m = new Map<string, OrderItem[]>();
@@ -56,21 +67,32 @@ export function Orders() {
     <>
       <div className="admin-tabs" style={{ marginTop: 16 }}>
         {FILTERS.map((f) => (
-          <button key={f} type="button" className={`admin-tab${filter === f ? ' active' : ''}`} onClick={() => setFilter(f)}>
+          <button
+            key={f}
+            type="button"
+            className={`admin-tab${filter === f ? ' active' : ''}`}
+            onClick={() => setFilter(f)}
+          >
             {f}
           </button>
         ))}
       </div>
 
       {orders.length === 0 ? (
-        <div className="empty" style={{ marginTop: 12 }}><p>No orders yet.</p></div>
+        <div className="empty" style={{ marginTop: 12 }}>
+          <p>No orders yet.</p>
+        </div>
       ) : (
         orders.map((o) => {
           const orderItems = itemsByOrder.get(o.id) ?? [];
           const isOpen = expanded === o.id;
           return (
             <div className="order-card" key={o.id}>
-              <div className="order-top" style={{ cursor: 'pointer' }} onClick={() => setExpanded(isOpen ? null : o.id)}>
+              <div
+                className="order-top"
+                style={{ cursor: 'pointer' }}
+                onClick={() => setExpanded(isOpen ? null : o.id)}
+              >
                 <span className="order-id">#{o.order_code}</span>
                 <span className="muted" style={{ fontSize: 12 }}>
                   {o.customer_name} · {formatMoney(o.total, currency)}
@@ -80,15 +102,22 @@ export function Orders() {
               {isOpen && (
                 <>
                   <div className="muted" style={{ fontSize: 12.5, marginBottom: 10 }}>
-                    {o.customer_name}<br />
-                    {o.customer_address}<br />
-                    {o.customer_city}{o.customer_zip ? `, ${o.customer_zip}` : ''}
+                    {o.customer_name}
+                    <br />
+                    {o.customer_address}
+                    <br />
+                    {o.customer_city}
+                    {o.customer_zip ? `, ${o.customer_zip}` : ''}
                   </div>
                   <div style={{ marginBottom: 12 }}>
                     {orderItems.map((it) => (
                       <div key={it.id} className="sum-row">
-                        <span>{it.product_name} × {it.quantity}</span>
-                        <span className="val">{formatMoney(Number(it.product_price) * it.quantity, currency)}</span>
+                        <span>
+                          {it.product_name} × {it.quantity}
+                        </span>
+                        <span className="val">
+                          {formatMoney(Number(it.product_price) * it.quantity, currency)}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -97,14 +126,29 @@ export function Orders() {
 
               <div className="order-bottom">
                 <span className="order-date">
-                  {new Date(o.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                  {new Date(o.created_at).toLocaleDateString(undefined, {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                  })}
                 </span>
                 <select
                   value={o.status}
                   onChange={(e) => changeStatus(o, e.target.value as OrderStatus)}
-                  style={{ border: '1px solid var(--line)', borderRadius: 8, padding: '4px 8px', background: 'var(--surface)', fontSize: 12, fontWeight: 600 }}
+                  style={{
+                    border: '1px solid var(--line)',
+                    borderRadius: 8,
+                    padding: '4px 8px',
+                    background: 'var(--surface)',
+                    fontSize: 12,
+                    fontWeight: 600,
+                  }}
                 >
-                  {STATUSES.map((s) => (<option key={s} value={s}>{s}</option>))}
+                  {STATUSES.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
