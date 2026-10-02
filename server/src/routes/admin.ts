@@ -1,8 +1,12 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { supabaseAdmin } from '../supabase.js';
-import { HttpError, requireRole } from '../middleware/auth.js';
+import { HttpError, requireRole, currentProfile } from '../middleware/auth.js';
 import { SettingsUpdateSchema, OrderStatusUpdateSchema } from '../schemas.js';
-import { deliverDigitalGood, notifyBuyerOfDelivery } from '../bot.js';
+import {
+  deliverDigitalGood,
+  notifyBuyerOfDelivery,
+  notifyBuyerPaymentConfirmed,
+} from '../bot.js';
 import type { Order, OrderItem, Product, Profile, StoreSettings } from '../types.js';
 
 export const adminRoutes: FastifyPluginAsync = async (app) => {
@@ -33,10 +37,73 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       ? await supabaseAdmin.from('order_items').select('*').in('order_id', ids)
       : { data: [] as OrderItem[] };
 
+    // Receipt signed URLs, generated per order that has one.
+    const ordersWithSigned: Array<Order & { payment_proof_signed_url: string | null }> = [];
+    for (const o of (orders as Order[]) ?? []) {
+      let signed: string | null = null;
+      if (o.payment_proof_url) {
+        const { data } = await supabaseAdmin.storage
+          .from('receipts')
+          .createSignedUrl(o.payment_proof_url, 60 * 30);
+        signed = data?.signedUrl ?? null;
+      }
+      ordersWithSigned.push({ ...o, payment_proof_signed_url: signed });
+    }
+
     return reply.send({
-      orders: (orders as Order[]) ?? [],
+      orders: ordersWithSigned,
       items: (items as OrderItem[]) ?? [],
     });
+  });
+
+  /**
+   * Admin confirms money received (for bank / crypto / COD / manual).
+   * Only valid on a Pending payment order.
+   */
+  app.post('/api/admin/orders/:id/confirm-paid', admin, async (req, reply) => {
+    const me = currentProfile(req);
+    const { id } = req.params as { id: string };
+
+    const { data: existing } = await supabaseAdmin
+      .from('orders')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (!existing) throw new HttpError(404, 'Order not found');
+    if (existing.status !== 'Pending payment') {
+      throw new HttpError(409, 'Order is not awaiting payment.');
+    }
+
+    const now = new Date().toISOString();
+    const { data: updated, error } = await supabaseAdmin
+      .from('orders')
+      .update({
+        status: 'Paid',
+        payment_confirmed_at: now,
+        paid_confirmed_at: now,
+        paid_confirmed_by: me.id,
+      })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error || !updated) throw new HttpError(500, error?.message ?? 'confirm failed');
+
+    // Notify buyer.
+    if (updated.user_id) {
+      const { data: profile } = await supabaseAdmin
+        .from('profiles')
+        .select('telegram_id')
+        .eq('id', updated.user_id)
+        .maybeSingle();
+      if (profile?.telegram_id) {
+        await notifyBuyerPaymentConfirmed({
+          telegramId: Number(profile.telegram_id),
+          orderCode: updated.order_code,
+        });
+      }
+    }
+
+    return reply.send({ order: updated as Order });
   });
 
   app.patch('/api/admin/orders/:id', admin, async (req, reply) => {
@@ -50,11 +117,10 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       .maybeSingle();
     if (!existing) throw new HttpError(404, 'Order not found');
 
-    const updates: Partial<Order> & { payment_confirmed_at?: string | null; delivered_at?: string | null } = {
-      status: body.status,
-    };
+    const updates: Record<string, string | null> = { status: body.status };
     if (body.status === 'Paid' && !existing.payment_confirmed_at) {
       updates.payment_confirmed_at = new Date().toISOString();
+      updates.paid_confirmed_at = new Date().toISOString();
     }
     if (body.status === 'Delivered' && !existing.delivered_at) {
       updates.delivered_at = new Date().toISOString();
@@ -68,8 +134,6 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       .single();
     if (error || !updated) throw new HttpError(404, 'Order not found');
 
-    // On the transition to Delivered, notify the buyer and (if any line
-    // is digital) send the download link automatically.
     if (body.status === 'Delivered' && existing.status !== 'Delivered') {
       const order = updated as Order;
       const { data: items } = await supabaseAdmin
@@ -78,7 +142,6 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
         .eq('order_id', order.id);
       const rows = (items as OrderItem[]) ?? [];
 
-      // Buyer's Telegram ID
       let buyerTelegramId: number | null = null;
       if (order.user_id) {
         const { data: profile } = await supabaseAdmin
@@ -90,7 +153,6 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       }
 
       if (buyerTelegramId) {
-        // Digital delivery for every digital line.
         const productIds = rows.map((r) => r.product_id).filter((x): x is string => !!x);
         if (productIds.length > 0) {
           const { data: products } = await supabaseAdmin
@@ -113,7 +175,6 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
           }
         }
 
-        // Always send the generic "order is ready" ping too.
         await notifyBuyerOfDelivery({
           telegramId: buyerTelegramId,
           orderCode: order.order_code,
