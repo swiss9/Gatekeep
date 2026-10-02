@@ -56,8 +56,10 @@ export function ProductDetail({ id }: Props) {
   const currency = store.currency_symbol;
   const isDigital = product.delivery_type === 'digital';
   const isNone = product.delivery_type === 'none';
-  const inStock = isNone || product.stock > 0;
-  const maxQty = isNone ? 99 : Math.min(product.stock, 9);
+  // Digital files are always purchasable regardless of stock (stock is
+  // forced to 0 for digital in the admin form). Services ('none') too.
+  const inStock = isNone || isDigital || product.stock > 0;
+  const maxQty = isDigital || isNone ? 1 : Math.min(product.stock, 9);
   const saved = wishlist.has(product.id);
 
   return (
@@ -113,7 +115,7 @@ export function ProductDetail({ id }: Props) {
         </span>
       </div>
 
-      {!isNone && (
+      {!isNone && !isDigital && (
         <div className="qty-row">
           <span className="section-title">Quantity</span>
           <QuantityStepper value={qty} min={1} max={Math.max(1, maxQty)} onChange={setQty} />
@@ -155,12 +157,12 @@ export function ProductDetail({ id }: Props) {
           onClick={() => {
             if (!inStock) return;
             haptic('medium');
-            replace(product, isNone ? 1 : Math.min(qty, product.stock || 1));
+            replace(product, isDigital || isNone ? 1 : Math.min(qty, product.stock || 1));
             navigate({ name: 'checkout' });
           }}
         >
           {inStock
-            ? isDigital
+            ? isDigital || isNone
               ? `Buy Now · ${formatMoney(product.price, currency)}`
               : `Buy Now · ${formatMoney(product.price * qty, currency)}`
             : 'Out of stock'}
