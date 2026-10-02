@@ -115,7 +115,7 @@ export function Orders() {
   const simulatePaid = async (order: OrderWithReceipt) => {
     const ok = window.confirm(
       `Mark #${order.order_code} as paid WITHOUT any real payment?\n\n` +
-      `Use this only to test the fulfillment pipeline. The order will be flagged as simulated.`,
+        `Use this only to test the fulfillment pipeline. The order will be flagged as simulated.`,
     );
     if (!ok) return;
     setBusy(order.id);
@@ -163,21 +163,31 @@ export function Orders() {
 
       {shown.length === 0 ? (
         <div className="empty" style={{ marginTop: 12 }}>
-          <p>{filter === 'Awaiting confirmation' ? 'Nothing awaiting confirmation.' : 'No orders yet.'}</p>
+          <p>
+            {filter === 'Awaiting confirmation'
+              ? 'Nothing awaiting confirmation.'
+              : 'No orders yet.'}
+          </p>
         </div>
       ) : (
         shown.map((o) => {
           const orderItems = itemsByOrder.get(o.id) ?? [];
           const isOpen = expanded === o.id;
-          const methodLabel = PAYMENT_METHOD_LABEL[o.payment_method as PaymentMethod] ?? o.payment_method;
+          const methodLabel =
+            PAYMENT_METHOD_LABEL[o.payment_method as PaymentMethod] ?? o.payment_method;
           const canConfirm = o.status === 'Pending payment';
           const isBusy = busy === o.id;
 
-          // Hide address block for orders that contain no physical items.
           const hasPhysicalItem = orderItems.some((it) => it.product_id !== null);
           const hasAddressText =
             o.customer_address && o.customer_address !== '—' && hasPhysicalItem;
-          const hasCityText = o.customer_city && o.customer_city !== '—' && hasPhysicalItem;
+          const hasCityText =
+            o.customer_city && o.customer_city !== '—' && hasPhysicalItem;
+
+          const hasProof =
+            !!o.payment_proof_note ||
+            !!o.payment_tx_hash ||
+            !!o.payment_proof_signed_url;
 
           return (
             <div className="order-card" key={o.id}>
@@ -239,29 +249,96 @@ export function Orders() {
                   <div style={{ marginBottom: 12 }}>
                     {orderItems.map((it) => (
                       <div key={it.id} className="sum-row">
-                        <span>{it.product_name} × {it.quantity}</span>
-                        <span className="val">{formatMoney(Number(it.product_price) * it.quantity, currency)}</span>
+                        <span>
+                          {it.product_name} × {it.quantity}
+                        </span>
+                        <span className="val">
+                          {formatMoney(Number(it.product_price) * it.quantity, currency)}
+                        </span>
                       </div>
                     ))}
                   </div>
 
-                  {(o.payment_proof_note || o.payment_tx_hash || o.payment_proof_signed_url) && (
-                    <div style={{ border: '1px solid var(--line)', borderRadius: 10, padding: 12, marginBottom: 12 }}>
-                      <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>
+                  {hasProof && (
+                    <div
+                      style={{
+                        border: '1px solid var(--line)',
+                        borderRadius: 10,
+                        padding: 12,
+                        marginBottom: 12,
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: 10.5,
+                          fontWeight: 800,
+                          letterSpacing: '0.08em',
+                          textTransform: 'uppercase',
+                          color: 'var(--muted)',
+                          marginBottom: 8,
+                        }}
+                      >
                         Payment proof
                       </div>
+
                       {o.payment_tx_hash && (
-                        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5, wordBreak: 'break-all', marginBottom: 6 }}>
+                        <div
+                          style={{
+                            fontFamily: "'JetBrains Mono', monospace",
+                            fontSize: 11.5,
+                            wordBreak: 'break-all',
+                            marginBottom: 6,
+                          }}
+                        >
                           tx: {o.payment_tx_hash}
                         </div>
                       )}
+
                       {o.payment_proof_note && (
-                        <div className="muted" style={{ fontSize: 12.5, marginBottom: 6 }}>{o.payment_proof_note}</div>
+                        <div className="muted" style={{ fontSize: 12.5, marginBottom: 8 }}>
+                          {o.payment_proof_note}
+                        </div>
                       )}
+
                       {o.payment_proof_signed_url && (
-                        <a href={o.payment_proof_signed_url} target="_blank" rel="noreferrer" className="link-btn" style={{ display: 'inline-block' }}>
-                          View receipt image
-                        </a>
+                        <>
+                          <div
+                            className="muted"
+                            style={{ fontSize: 12, marginBottom: 6 }}
+                          >
+                            Receipt image
+                          </div>
+                          <a
+                            href={o.payment_proof_signed_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{
+                              display: 'block',
+                              borderRadius: 10,
+                              overflow: 'hidden',
+                              border: '1px solid var(--line)',
+                              background: 'var(--chip)',
+                            }}
+                          >
+                            <img
+                              src={o.payment_proof_signed_url}
+                              alt="Receipt"
+                              loading="lazy"
+                              style={{
+                                width: '100%',
+                                maxHeight: 360,
+                                objectFit: 'contain',
+                                display: 'block',
+                              }}
+                            />
+                          </a>
+                          <p
+                            className="muted"
+                            style={{ fontSize: 11, marginTop: 6 }}
+                          >
+                            Tap to open full size · link expires in 30 min
+                          </p>
+                        </>
                       )}
                     </div>
                   )}
@@ -311,10 +388,19 @@ export function Orders() {
                 <select
                   value={o.status}
                   onChange={(e) => changeStatus(o, e.target.value as OrderStatus)}
-                  style={{ border: '1px solid var(--line)', borderRadius: 8, padding: '4px 8px', background: 'var(--surface)', fontSize: 12, fontWeight: 600 }}
+                  style={{
+                    border: '1px solid var(--line)',
+                    borderRadius: 8,
+                    padding: '4px 8px',
+                    background: 'var(--surface)',
+                    fontSize: 12,
+                    fontWeight: 600,
+                  }}
                 >
                   {STATUSES.map((s) => (
-                    <option key={s} value={s}>{s}</option>
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
                   ))}
                 </select>
               </div>
