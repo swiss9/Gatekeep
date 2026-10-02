@@ -2,15 +2,8 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { env } from '../env.js';
 import { supabaseAdmin } from '../supabase.js';
-import { HttpError } from '../middleware/auth.js';
 import { notifyBuyerPaymentConfirmed } from '../bot.js';
 
-/**
- * Verifies a Stripe webhook signature without the SDK.
- * Header format: "t=<unix>,v1=<hex>[,v0=...]"
- * Signed payload: "<timestamp>.<raw_body>"
- * Algorithm: HMAC-SHA256 with the endpoint signing secret.
- */
 function verifyStripeSignature(rawBody: Buffer, header: string, secret: string): boolean {
   const parts: Record<string, string> = {};
   for (const p of header.split(',')) {
@@ -24,7 +17,6 @@ function verifyStripeSignature(rawBody: Buffer, header: string, secret: string):
   const v1 = parts['v1'];
   if (!t || !v1) return false;
 
-  // Reject signatures older than 5 minutes to blunt replay attacks.
   const ts = Number(t);
   if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > 300) return false;
 
@@ -84,45 +76,39 @@ export const paymentRoutes: FastifyPluginAsync = async (app) => {
 };
 
 async function markPaidByOrderCode(orderCode: string): Promise<void> {
-  const { data: existing } = await supabaseAdmin
-    .from('orders')
-    .select('id, status, order_code, user_id')
-    .eq('order_code', orderCode)
-    .maybeSingle();
-  if (!existing) {
-    console.warn(`[stripe] webhook for unknown order_code=${orderCode}`);
-    return;
-  }
-  if (existing.status !== 'Pending payment') {
-    // Idempotent — Stripe may retry. Nothing to do.
-    return;
-  }
-
-  await supabaseAdmin
+  const now = new Date().toISOString();
+  const { data: updated } = await supabaseAdmin
     .from('orders')
     .update({
       status: 'Paid',
-      payment_confirmed_at: new Date().toISOString(),
-      paid_confirmed_at: new Date().toISOString(),
+      payment_confirmed_at: now,
+      paid_confirmed_at: now,
     })
-    .eq('id', existing.id);
+    .eq('order_code', orderCode)
+    .eq('status', 'Pending payment')
+    .select('id, order_code, user_id')
+    .maybeSingle();
 
-  if (existing.user_id) {
+  if (!updated) {
+    // Idempotent no-op. Either the order doesn't exist, was already
+    // marked paid by an admin, or was cancelled. Stripe retries are safe.
+    console.log(`[stripe] webhook for order_code=${orderCode} — nothing to do`);
+    return;
+  }
+
+  if (updated.user_id) {
     const { data: profile } = await supabaseAdmin
       .from('profiles')
       .select('telegram_id')
-      .eq('id', existing.user_id)
+      .eq('id', updated.user_id)
       .maybeSingle();
     if (profile?.telegram_id) {
       await notifyBuyerPaymentConfirmed({
         telegramId: Number(profile.telegram_id),
-        orderCode: existing.order_code,
+        orderCode: updated.order_code,
       });
     }
   }
 
-  console.log(`[stripe] order ${existing.order_code} marked paid`);
+  console.log(`[stripe] order ${updated.order_code} marked paid`);
 }
-
-// Silence unused import warning for HttpError in isolated build mode.
-void HttpError;
