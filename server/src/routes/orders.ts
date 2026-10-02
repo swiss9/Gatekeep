@@ -203,9 +203,12 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       throw new HttpError(500, `order_items failed: ${liErr.message}`);
     }
 
-    // ---- Payment handoff: build the external checkout URL BEFORE
-    //      touching stock. If the upstream call fails we delete the
-    //      order and no inventory has moved.
+    // ---- Payment handoff ----
+    // Build the external checkout URL BEFORE decrementing stock. If the
+    // upstream call fails we delete the order and no inventory has moved.
+    //
+    // We also persist the URL to orders.payment_redirect_url so the
+    // confirmation screen can offer a "re-open" button after a reload.
     let starsInvoiceUrl: string | null = null;
     let stripeCheckoutUrl: string | null = null;
 
@@ -222,6 +225,10 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
         await supabaseAdmin.from('orders').delete().eq('id', order.id);
         throw new HttpError(502, 'Could not create Telegram Stars invoice. Try again.');
       }
+      await supabaseAdmin
+        .from('orders')
+        .update({ payment_redirect_url: starsInvoiceUrl })
+        .eq('id', order.id);
     }
 
     if (method === 'stripe' && settings) {
@@ -241,6 +248,10 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
         const msg = err instanceof HttpError ? err.message : 'Stripe session failed.';
         throw new HttpError(502, msg);
       }
+      await supabaseAdmin
+        .from('orders')
+        .update({ payment_redirect_url: stripeCheckoutUrl })
+        .eq('id', order.id);
     }
 
     // ---- Decrement stock for physical items ----
