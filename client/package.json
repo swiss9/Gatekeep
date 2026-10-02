@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "engines": { "node": ">=20.0.0" }
     "@fontsource/inter": "^5.0.20",
     "@fontsource/jetbrains-mono": "^5.0.20",
     "@fontsource/space-grotesk": "^5.0.20",
