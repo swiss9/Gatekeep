@@ -333,12 +333,6 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const MAX_RECEIPT_BYTES = 8 * 1024 * 1024;
 
-/**
- * Digital file allowlist. Deliberately excludes:
- *   - text/html, image/svg+xml — inline-script XSS vectors if any
- *     future change serves the file inline.
- *   - application/x-msdownload / .exe — malware vector for buyers.
- */
 const ALLOWED_DIGITAL_TYPES = [
   'application/pdf',
   'application/zip',
@@ -353,12 +347,19 @@ const ALLOWED_DIGITAL_TYPES = [
 
 const ALLOWED_RECEIPT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic'];
 
+/**
+ * Uploads a file to Supabase Storage. `upsert` controls the
+ * x-upsert header — true means the upload overwrites an existing object
+ * at the same path. Receipts use upsert so a buyer can replace a bad
+ * image; products and digital goods use create-only.
+ */
 async function uploadToBucket(
   file: File,
   bucket: string,
   path: string,
   maxBytes: number,
   allowed: string[],
+  upsert = false,
 ): Promise<void> {
   if (!allowed.includes(file.type)) {
     throw new ApiError(400, `Unsupported file type: ${file.type || 'unknown'}.`);
@@ -374,7 +375,7 @@ async function uploadToBucket(
     headers: {
       Authorization: `Bearer ${token}`,
       apikey: ANON_KEY,
-      'x-upsert': 'false',
+      'x-upsert': upsert ? 'true' : 'false',
     },
     body: file,
   });
@@ -399,8 +400,8 @@ export async function uploadDigitalFile(file: File): Promise<string> {
 /**
  * Uploads a payment receipt to the private receipts bucket. RLS requires
  * the path to start with the uploading user's id, hence the folder.
- * Returns the storage path (NOT a URL) — the server generates a
- * short-lived signed URL when an admin opens the order.
+ * `upsert: true` lets a buyer replace an earlier receipt for the same
+ * order without hitting a 409.
  */
 export async function uploadReceipt(
   file: File,
@@ -412,7 +413,7 @@ export async function uploadReceipt(
     ? ext || 'jpg'
     : 'jpg';
   const path = `${userId}/${orderId}.${safeExt}`;
-  await uploadToBucket(file, 'receipts', path, MAX_RECEIPT_BYTES, ALLOWED_RECEIPT_TYPES);
+  await uploadToBucket(file, 'receipts', path, MAX_RECEIPT_BYTES, ALLOWED_RECEIPT_TYPES, true);
   return path;
 }
 
