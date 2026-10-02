@@ -10,13 +10,20 @@ export type Profile = {
   created_at: string;
 };
 
-export type PaymentProvider = 'none' | 'stripe_link' | 'ton' | 'custom';
+export type PaymentProvider =
+  | 'manual'
+  | 'cod'
+  | 'bank'
+  | 'crypto'
+  | 'stars'
+  | 'stripe';
 
 export type StoreSettings = {
   id: 1;
   store_name: string;
   store_tagline: string;
   currency_symbol: string;
+  currency_code: string;
   shipping_threshold: number;
   shipping_cost: number;
   banner_enabled: boolean;
@@ -33,6 +40,16 @@ export type StoreSettings = {
   perk_1_text: string;
   perk_2_text: string;
   perk_3_text: string;
+  stars_enabled: boolean;
+  stars_rate: number;
+  bank_enabled: boolean;
+  bank_details: string;
+  crypto_enabled: boolean;
+  crypto_btc: string;
+  crypto_eth: string;
+  crypto_usdt_trc20: string;
+  crypto_ton: string;
+  stripe_enabled: boolean;
   updated_at: string;
 };
 
@@ -89,8 +106,16 @@ export type Order = {
   total: number;
   payment_confirmed_at: string | null;
   delivered_at: string | null;
+  payment_proof_url: string | null;
+  payment_proof_note: string | null;
+  payment_tx_hash: string | null;
+  paid_confirmed_at: string | null;
+  paid_confirmed_by: string | null;
+  payment_redirect_url: string | null;
   created_at: string;
 };
+
+export type OrderWithReceipt = Order & { payment_proof_signed_url: string | null };
 
 export type OrderItem = {
   id: string;
@@ -113,12 +138,29 @@ export type AdminInvite = {
   created_at: string;
 };
 
-export type PaymentMethod = 'card' | 'apple' | 'cod';
+export type PaymentMethod = 'manual' | 'cod' | 'bank' | 'crypto' | 'stars' | 'stripe';
+
+export type PaymentPayload =
+  | { kind: 'none' }
+  | { kind: 'stars'; invoice_url: string }
+  | { kind: 'stripe'; url: string }
+  | { kind: 'bank'; details: string }
+  | {
+      kind: 'crypto';
+      addresses: { btc: string; eth: string; usdt_trc20: string; ton: string };
+    }
+  | { kind: 'cod' };
 
 export type CreateOrderBody = {
   items: { product_id: string; quantity: number }[];
   delivery: { name: string; address: string; city: string; zip?: string };
   payment_method: PaymentMethod;
+};
+
+export type ProofSubmitBody = {
+  note?: string;
+  tx_hash?: string;
+  proof_url?: string;
 };
 
 export type ProductWriteBody = {
@@ -182,7 +224,10 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
   if (!res.ok) {
     const message =
-      data && typeof data === 'object' && 'error' in data && typeof (data as { error: unknown }).error === 'string'
+      data &&
+      typeof data === 'object' &&
+      'error' in data &&
+      typeof (data as { error: unknown }).error === 'string'
         ? (data as { error: string }).error
         : res.statusText;
     throw new ApiError(res.status, message);
@@ -213,10 +258,13 @@ export const api = {
   myOrders: () => request<{ orders: Order[]; items: OrderItem[] }>('/api/orders/mine'),
 
   createOrder: (body: CreateOrderBody) =>
-    request<{ order: Order; payment_url: string | null }>('/api/orders', {
+    request<{ order: Order; payment: PaymentPayload }>('/api/orders', {
       method: 'POST',
       body,
     }),
+
+  submitProof: (orderId: string, body: ProofSubmitBody) =>
+    request<{ order: Order }>(`/api/orders/${orderId}/proof`, { method: 'POST', body }),
 
   updateSettings: (patch: Partial<Omit<StoreSettings, 'id' | 'updated_at'>>) =>
     request<{ store: StoreSettings }>('/api/admin/settings', { method: 'PATCH', body: patch }),
@@ -240,12 +288,15 @@ export const api = {
     request<{ ok: true }>(`/api/admin/products/${id}`, { method: 'DELETE' }),
 
   adminOrders: (status?: string) =>
-    request<{ orders: Order[]; items: OrderItem[] }>(
+    request<{ orders: OrderWithReceipt[]; items: OrderItem[] }>(
       `/api/admin/orders${status && status !== 'All' ? `?status=${encodeURIComponent(status)}` : ''}`,
     ),
 
   updateOrderStatus: (id: string, status: OrderStatus) =>
     request<{ order: Order }>(`/api/admin/orders/${id}`, { method: 'PATCH', body: { status } }),
+
+  confirmOrderPaid: (id: string) =>
+    request<{ order: Order }>(`/api/admin/orders/${id}/confirm-paid`, { method: 'POST' }),
 
   overview: () =>
     request<{
@@ -280,34 +331,35 @@ export const api = {
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
+const MAX_RECEIPT_BYTES = 8 * 1024 * 1024;
 
 /**
  * Digital file allowlist. Deliberately excludes:
  *   - text/html, image/svg+xml — inline-script XSS vectors if any
- *     future change serves the file inline (signed URLs default to
- *     Content-Disposition: attachment, but defense in depth).
+ *     future change serves the file inline.
  *   - application/x-msdownload / .exe — malware vector for buyers.
- * If you sell a format outside this list (e.g. a custom e-book format),
- * add its MIME type here.
  */
 const ALLOWED_DIGITAL_TYPES = [
   'application/pdf',
   'application/zip',
   'application/x-zip-compressed',
   'application/epub+zip',
-  'application/octet-stream', // generic binary — many e-book/DAW exports
+  'application/octet-stream',
   'audio/mpeg',
   'audio/wav',
   'audio/mp4',
   'video/mp4',
 ];
 
+const ALLOWED_RECEIPT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic'];
+
 async function uploadToBucket(
   file: File,
   bucket: string,
+  path: string,
   maxBytes: number,
   allowed: string[],
-): Promise<string> {
+): Promise<void> {
   if (!allowed.includes(file.type)) {
     throw new ApiError(400, `Unsupported file type: ${file.type || 'unknown'}.`);
   }
@@ -316,10 +368,7 @@ async function uploadToBucket(
   }
   if (!token) throw new ApiError(401, 'Not authenticated.');
 
-  const ext = (file.name.split('.').pop() ?? 'bin').toLowerCase().replace(/[^a-z0-9]/g, '');
-  const path = `${crypto.randomUUID()}.${ext}`;
   const uploadUrl = `${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`;
-
   const res = await fetch(uploadUrl, {
     method: 'POST',
     headers: {
@@ -331,16 +380,40 @@ async function uploadToBucket(
   });
 
   if (!res.ok) throw new ApiError(res.status, 'Upload failed.');
-  return path;
 }
 
 export async function uploadProductImage(file: File): Promise<string> {
-  const path = await uploadToBucket(file, 'products', MAX_IMAGE_BYTES, ALLOWED_IMAGE_TYPES);
+  const ext = (file.name.split('.').pop() ?? 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const path = `${crypto.randomUUID()}.${ext}`;
+  await uploadToBucket(file, 'products', path, MAX_IMAGE_BYTES, ALLOWED_IMAGE_TYPES);
   return `${SUPABASE_URL}/storage/v1/object/public/products/${path}`;
 }
 
 export async function uploadDigitalFile(file: File): Promise<string> {
-  return uploadToBucket(file, 'digital-goods', MAX_FILE_BYTES, ALLOWED_DIGITAL_TYPES);
+  const ext = (file.name.split('.').pop() ?? 'bin').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const path = `${crypto.randomUUID()}.${ext}`;
+  await uploadToBucket(file, 'digital-goods', path, MAX_FILE_BYTES, ALLOWED_DIGITAL_TYPES);
+  return path;
+}
+
+/**
+ * Uploads a payment receipt to the private receipts bucket. RLS requires
+ * the path to start with the uploading user's id, hence the folder.
+ * Returns the storage path (NOT a URL) — the server generates a
+ * short-lived signed URL when an admin opens the order.
+ */
+export async function uploadReceipt(
+  file: File,
+  userId: string,
+  orderId: string,
+): Promise<string> {
+  const ext = (file.name.split('.').pop() ?? 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const safeExt = ALLOWED_RECEIPT_TYPES.includes(file.type)
+    ? ext || 'jpg'
+    : 'jpg';
+  const path = `${userId}/${orderId}.${safeExt}`;
+  await uploadToBucket(file, 'receipts', path, MAX_RECEIPT_BYTES, ALLOWED_RECEIPT_TYPES);
+  return path;
 }
 
 export function formatMoney(value: number | string, symbol: string): string {
@@ -348,3 +421,12 @@ export function formatMoney(value: number | string, symbol: string): string {
   const r = Math.round(n * 100) / 100;
   return `${symbol}${r % 1 === 0 ? r.toString() : r.toFixed(2)}`;
 }
+
+export const PAYMENT_METHOD_LABEL: Record<PaymentMethod, string> = {
+  stars: 'Telegram Stars',
+  stripe: 'Card (Stripe)',
+  bank: 'Bank transfer',
+  crypto: 'Crypto',
+  cod: 'Cash on Delivery',
+  manual: 'Arrange with seller',
+};
