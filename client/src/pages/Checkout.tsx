@@ -1,6 +1,12 @@
-import { useEffect, useState } from 'react';
-import { api, formatMoney, type PaymentMethod } from '../lib/api';
-import { haptic, openExternalLink } from '../lib/telegram';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  api,
+  formatMoney,
+  PAYMENT_METHOD_LABEL,
+  type PaymentMethod,
+  type StoreSettings,
+} from '../lib/api';
+import { haptic, openExternalLink, openInvoice } from '../lib/telegram';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { useToast } from '../context/ToastContext';
@@ -10,11 +16,20 @@ import { PastelThumb } from '../components/PastelThumb';
 type Delivery = { name: string; address: string; city: string; zip: string };
 type FieldErrors = Partial<Record<keyof Delivery, boolean>>;
 
-const PAYMENTS: { id: PaymentMethod; name: string; sub: string }[] = [
-  { id: 'card', name: 'Credit Card', sub: '•••• 4242' },
-  { id: 'apple', name: 'Apple Pay', sub: 'instant' },
-  { id: 'cod', name: 'Cash on Delivery', sub: 'on delivery' },
-];
+type MethodMeta = {
+  id: PaymentMethod;
+  name: string;
+  sub: string;
+};
+
+const METHOD_META: Record<PaymentMethod, { name: string; sub: string }> = {
+  stars: { name: 'Telegram Stars', sub: 'pay inside Telegram' },
+  stripe: { name: 'Card', sub: 'via Stripe' },
+  bank: { name: 'Bank transfer', sub: 'manual confirmation' },
+  crypto: { name: 'Crypto', sub: 'BTC · ETH · USDT · TON' },
+  cod: { name: 'Cash on Delivery', sub: 'pay on delivery' },
+  manual: { name: 'Arrange with seller', sub: 'we message you' },
+};
 
 export function Checkout() {
   const { back, navigate } = useRouter();
@@ -28,15 +43,10 @@ export function Checkout() {
     city: '',
     zip: '',
   });
-  const [payment, setPayment] = useState<PaymentMethod>('card');
+  const [method, setMethod] = useState<PaymentMethod | null>(null);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submitting, setSubmitting] = useState(false);
-  const [store, setStore] = useState<{
-    currency_symbol: string;
-    shipping_threshold: number;
-    shipping_cost: number;
-    payment_provider: string;
-  } | null>(null);
+  const [store, setStore] = useState<StoreSettings | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -51,12 +61,37 @@ export function Checkout() {
     };
   }, []);
 
+  const needsAddress = useMemo(
+    () => items.some((i) => i.product.delivery_type === 'physical'),
+    [items],
+  );
+
+  const availableMethods = useMemo<MethodMeta[]>(() => {
+    if (!store) return [];
+    const out: MethodMeta[] = [];
+    if (store.stars_enabled) out.push({ id: 'stars', ...METHOD_META.stars });
+    if (store.stripe_enabled) out.push({ id: 'stripe', ...METHOD_META.stripe });
+    if (store.bank_enabled && store.bank_details.trim())
+      out.push({ id: 'bank', ...METHOD_META.bank });
+    if (store.crypto_enabled) out.push({ id: 'crypto', ...METHOD_META.crypto });
+    out.push({ id: 'cod', ...METHOD_META.cod });
+    out.push({ id: 'manual', ...METHOD_META.manual });
+    return out;
+  }, [store]);
+
+  // Pick a sane default once methods are known.
+  useEffect(() => {
+    if (method !== null) return;
+    const first = availableMethods[0];
+    if (first) setMethod(first.id);
+  }, [availableMethods, method]);
+
   const currency = store?.currency_symbol ?? '$';
   const threshold = store?.shipping_threshold ?? 60;
   const shipCost = store?.shipping_cost ?? 6;
 
   const subtotal = items.reduce((n, i) => n + i.product.price * i.quantity, 0);
-  const shipping = subtotal === 0 || subtotal >= threshold ? 0 : shipCost;
+  const shipping = needsAddress && subtotal < threshold ? shipCost : 0;
   const total = subtotal + shipping;
 
   if (items.length === 0) {
@@ -82,36 +117,60 @@ export function Checkout() {
   }
 
   const submit = async () => {
+    if (!method) {
+      toast('Pick a payment method');
+      return;
+    }
     const nextErrors: FieldErrors = {
       name: !delivery.name.trim(),
-      address: !delivery.address.trim(),
-      city: !delivery.city.trim(),
+      address: needsAddress ? !delivery.address.trim() : false,
+      city: needsAddress ? !delivery.city.trim() : false,
     };
     setErrors(nextErrors);
     if (Object.values(nextErrors).some(Boolean)) {
-      toast('Please fill in delivery details');
+      toast(needsAddress ? 'Please fill in delivery details' : 'Please enter your name');
       return;
     }
     setSubmitting(true);
     try {
-      const { order, payment_url } = await api.createOrder({
+      const { order, payment } = await api.createOrder({
         items: items.map((i) => ({ product_id: i.product.id, quantity: i.quantity })),
         delivery: {
           name: delivery.name.trim(),
-          address: delivery.address.trim(),
-          city: delivery.city.trim(),
+          address: needsAddress ? delivery.address.trim() : '',
+          city: needsAddress ? delivery.city.trim() : '',
           zip: delivery.zip.trim() || undefined,
         },
-        payment_method: payment,
+        payment_method: method,
       });
       haptic('heavy');
       clear();
 
-      // Cash on delivery is settled in person — no provider redirect.
-      if (payment_url && payment !== 'cod') {
-        openExternalLink(payment_url);
+      if (payment.kind === 'stars') {
+        // Open Telegram's native Stars invoice. The order is only marked
+        // Paid server-side once Telegram confirms — so navigate straight
+        // away and let the confirmation screen poll.
+        openInvoice(payment.invoice_url, (status) => {
+          if (status === 'paid') {
+            navigate({ name: 'confirmation', orderCode: order.order_code });
+          } else if (status === 'cancelled' || status === 'failed') {
+            toast('Payment cancelled');
+            navigate({ name: 'confirmation', orderCode: order.order_code });
+          } else {
+            // pending — navigate anyway, confirmation polls.
+            navigate({ name: 'confirmation', orderCode: order.order_code });
+          }
+        });
+        return;
       }
 
+      if (payment.kind === 'stripe') {
+        openExternalLink(payment.url);
+        navigate({ name: 'confirmation', orderCode: order.order_code });
+        return;
+      }
+
+      // bank / crypto / cod / manual / none — straight to instructions.
       navigate({ name: 'confirmation', orderCode: order.order_code });
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Order failed');
@@ -160,7 +219,7 @@ export function Checkout() {
       </div>
 
       <span className="section-title" style={{ display: 'block', marginTop: 22 }}>
-        Delivery
+        {needsAddress ? 'Delivery' : 'Contact'}
       </span>
       <div className="panel">
         <div className={`field${errors.name ? ' error' : ''}`}>
@@ -172,54 +231,64 @@ export function Checkout() {
             placeholder="Jane Cooper"
           />
         </div>
-        <div className={`field${errors.address ? ' error' : ''}`}>
-          <label>Address</label>
-          <input
-            type="text"
-            value={delivery.address}
-            onChange={(e) => setDelivery({ ...delivery, address: e.target.value })}
-            placeholder="226 Mercer Street"
-          />
-        </div>
-        <div className="field-row" style={{ marginBottom: 0 }}>
-          <div className={`field${errors.city ? ' error' : ''}`} style={{ marginBottom: 0 }}>
-            <label>City</label>
-            <input
-              type="text"
-              value={delivery.city}
-              onChange={(e) => setDelivery({ ...delivery, city: e.target.value })}
-              placeholder="New York"
-            />
-          </div>
-          <div className="field" style={{ marginBottom: 0 }}>
-            <label>ZIP</label>
-            <input
-              type="text"
-              value={delivery.zip}
-              onChange={(e) => setDelivery({ ...delivery, zip: e.target.value })}
-              placeholder="10012"
-            />
-          </div>
-        </div>
+        {needsAddress && (
+          <>
+            <div className={`field${errors.address ? ' error' : ''}`}>
+              <label>Address</label>
+              <input
+                type="text"
+                value={delivery.address}
+                onChange={(e) => setDelivery({ ...delivery, address: e.target.value })}
+                placeholder="226 Mercer Street"
+              />
+            </div>
+            <div className="field-row" style={{ marginBottom: 0 }}>
+              <div className={`field${errors.city ? ' error' : ''}`} style={{ marginBottom: 0 }}>
+                <label>City</label>
+                <input
+                  type="text"
+                  value={delivery.city}
+                  onChange={(e) => setDelivery({ ...delivery, city: e.target.value })}
+                  placeholder="New York"
+                />
+              </div>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>ZIP</label>
+                <input
+                  type="text"
+                  value={delivery.zip}
+                  onChange={(e) => setDelivery({ ...delivery, zip: e.target.value })}
+                  placeholder="10012"
+                />
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       <span className="section-title" style={{ display: 'block', marginTop: 22 }}>
         Payment
       </span>
       <div style={{ marginTop: 12 }}>
-        {PAYMENTS.map((p) => (
-          <div
-            key={p.id}
-            className={`pay-opt${payment === p.id ? ' selected' : ''}`}
-            onClick={() => setPayment(p.id)}
-          >
-            <span className="radio">
-              <i />
-            </span>
-            <span className="pay-name">{p.name}</span>
-            <span className="pay-sub">{p.sub}</span>
+        {availableMethods.length === 0 ? (
+          <div className="empty">
+            <p>No payment methods are enabled. Contact the store owner.</p>
           </div>
-        ))}
+        ) : (
+          availableMethods.map((p) => (
+            <div
+              key={p.id}
+              className={`pay-opt${method === p.id ? ' selected' : ''}`}
+              onClick={() => setMethod(p.id)}
+            >
+              <span className="radio">
+                <i />
+              </span>
+              <span className="pay-name">{p.name}</span>
+              <span className="pay-sub">{p.sub}</span>
+            </div>
+          ))
+        )}
       </div>
 
       <div className="panel">
@@ -227,14 +296,16 @@ export function Checkout() {
           <span>Subtotal</span>
           <span className="val">{formatMoney(subtotal, currency)}</span>
         </div>
-        <div className="sum-row">
-          <span>Shipping</span>
-          {shipping === 0 ? (
-            <span className="free">Free</span>
-          ) : (
-            <span className="val">{formatMoney(shipping, currency)}</span>
-          )}
-        </div>
+        {needsAddress && (
+          <div className="sum-row">
+            <span>Shipping</span>
+            {shipping === 0 ? (
+              <span className="free">Free</span>
+            ) : (
+              <span className="val">{formatMoney(shipping, currency)}</span>
+            )}
+          </div>
+        )}
         <div className="sum-row total">
           <span>Total</span>
           <span className="val">{formatMoney(total, currency)}</span>
@@ -242,10 +313,22 @@ export function Checkout() {
       </div>
 
       <div className="ctabar">
-        <button type="button" className="btn-primary" disabled={submitting} onClick={submit}>
-          {submitting ? 'Placing order…' : `Pay ${formatMoney(total, currency)}`}
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={submitting || !method}
+          onClick={submit}
+        >
+          {submitting
+            ? 'Placing order…'
+            : method
+              ? `Pay ${formatMoney(total, currency)}`
+              : 'Select method'}
         </button>
       </div>
     </section>
   );
 }
+
+// Suppress unused import warnings in isolated TS builds.
+export { PAYMENT_METHOD_LABEL };
