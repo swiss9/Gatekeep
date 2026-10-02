@@ -9,9 +9,11 @@ import {
 } from '../lib/api';
 
 const STATUS_CLASS: Record<OrderStatus, string> = {
-  Delivered: 'mint',
-  'In transit': 'blue',
+  'Pending payment': 'yellow',
+  Paid: 'blue',
   Processing: 'yellow',
+  'In transit': 'blue',
+  Delivered: 'mint',
   Cancelled: 'red',
 };
 
@@ -138,4 +140,4 @@ export function Orders() {
       )}
     </section>
   );
-}
+                      }
