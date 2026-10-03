@@ -175,25 +175,29 @@ create policy categories_write_admin on public.categories
 
 -- =====================================================================
 -- products
+-- digital_file_paths is an array of storage paths inside the private
+-- 'digital-goods' bucket. Products can ship multiple files (e.g. a
+-- PDF + a zip of assets + a README); the delivery flow signs each one
+-- separately and sends a download button per file.
 -- =====================================================================
 create table public.products (
-  id                uuid primary key default gen_random_uuid(),
-  name              text not null,
-  description       text default '',
-  price             numeric not null,
-  category_id       uuid references public.categories(id) on delete set null,
-  image_url         text,
-  pastel_color      text not null default 'blue'
-                      check (pastel_color in ('blue','pink','yellow','mint')),
-  stock             int not null default 0,
-  active            boolean not null default true,
-  rating            numeric not null default 5.0,
-  review_count      int not null default 0,
-  delivery_type     text not null default 'physical'
-                      check (delivery_type in ('physical','digital','none')),
-  digital_file_path text,
-  created_at        timestamptz not null default now(),
-  updated_at        timestamptz not null default now()
+  id                 uuid primary key default gen_random_uuid(),
+  name               text not null,
+  description        text default '',
+  price              numeric not null,
+  category_id        uuid references public.categories(id) on delete set null,
+  image_url          text,
+  pastel_color       text not null default 'blue'
+                       check (pastel_color in ('blue','pink','yellow','mint')),
+  stock              int not null default 0,
+  active             boolean not null default true,
+  rating             numeric not null default 5.0,
+  review_count       int not null default 0,
+  delivery_type      text not null default 'physical'
+                       check (delivery_type in ('physical','digital','none')),
+  digital_file_paths text[] not null default '{}',
+  created_at         timestamptz not null default now(),
+  updated_at         timestamptz not null default now()
 );
 
 create index idx_products_category on public.products(category_id);
@@ -238,9 +242,9 @@ create table public.orders (
   delivered_at           timestamptz,
 
   -- Proof of payment (buyer-submitted)
-  payment_proof_url         text,
-  payment_proof_note        text,
-  payment_tx_hash           text,
+  payment_proof_url          text,
+  payment_proof_note         text,
+  payment_tx_hash            text,
   payment_proof_submitted_at timestamptz,
 
   -- External checkout URL (Stars invoice / Stripe session)
@@ -367,9 +371,9 @@ $$;
 
 -- =====================================================================
 -- Storage buckets
--- products     — public read, admin write. Product cover images.
+-- products      — public read, admin write. Product cover images.
 -- digital-goods — private, admin write only. Delivered via signed URL.
--- receipts     — private, buyer write to their own folder, admin read.
+-- receipts      — private, buyer write to their own folder, admin read.
 -- =====================================================================
 
 insert into storage.buckets (id, name, public) values
