@@ -28,6 +28,16 @@ type State =
 
 type Download = { product_name: string; file_index: number; file_total: number; signed_url: string };
 
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 export function Orders() {
   const toast = useToast();
   const [state, setState] = useState<State>({ kind: 'loading' });
@@ -124,8 +134,6 @@ export function Orders() {
           const items = itemsByOrder.get(o.id) ?? [];
           const count = items.reduce((n, i) => n + i.quantity, 0);
           const isAwaitingConfirm = o.status === 'Pending payment' && !!o.payment_proof_submitted_at;
-          // Downloads available on anything past Pending — paid orders,
-          // including ones that haven't been marked Delivered yet.
           const canDownload = o.status !== 'Pending payment' && o.status !== 'Cancelled';
           const shown = downloadsFor === o.id ? downloads : null;
 
@@ -146,10 +154,8 @@ export function Orders() {
                 <span className="order-more">{count} {count === 1 ? 'item' : 'items'}</span>
               </div>
               <div className="order-bottom">
-                <span className="order-date">
-                  {new Date(o.created_at).toLocaleDateString(undefined, {
-                    month: 'short', day: 'numeric', year: 'numeric',
-                  })}
+                <span className="order-date" style={{ fontSize: 11.5 }}>
+                  {formatDateTime(o.created_at)}
                 </span>
                 <span className="order-total">{formatMoney(o.total, currency)}</span>
               </div>
