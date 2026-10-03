@@ -76,7 +76,7 @@ export type Product = {
   rating: number;
   review_count: number;
   delivery_type: DeliveryType;
-  digital_file_path: string | null;
+  digital_file_paths: string[];
   created_at: string;
   updated_at: string;
 };
@@ -129,6 +129,13 @@ export type OrderItem = {
   pastel_color: string | null;
 };
 
+export type OrderDownload = {
+  product_name: string;
+  file_index: number;
+  file_total: number;
+  signed_url: string;
+};
+
 export type AdminInvite = {
   id: string;
   token: string;
@@ -175,7 +182,7 @@ export type ProductWriteBody = {
   stock?: number;
   active?: boolean;
   delivery_type?: DeliveryType;
-  digital_file_path?: string | null;
+  digital_file_paths?: string[];
 };
 
 // --- Client-side validation, mirrors server/src/schemas.ts ---
@@ -282,9 +289,7 @@ export const api = {
   myOrders: () => request<{ orders: Order[]; items: OrderItem[] }>('/api/orders/mine'),
 
   orderDownloads: (id: string) =>
-    request<{ downloads: Array<{ product_name: string; signed_url: string }> }>(
-      `/api/orders/${id}/downloads`,
-    ),
+    request<{ downloads: OrderDownload[] }>(`/api/orders/${id}/downloads`),
 
   createOrder: (body: CreateOrderBody) =>
     request<{ order: Order; payment: PaymentPayload }>('/api/orders', {
