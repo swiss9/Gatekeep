@@ -24,7 +24,7 @@ export function Admin({ initialTab = 'overview' }: { initialTab?: AdminTab }) {
     <section className="screen active">
       <div className="page-head">
         <h1 className="page-title h-display">Admin</h1>
-        <p className="page-sub">Store overview · updated today</p>
+        <p className="page-sub">Store overview</p>
       </div>
 
       <div className="admin-tabs">
@@ -46,10 +46,6 @@ export function Admin({ initialTab = 'overview' }: { initialTab?: AdminTab }) {
       {tab === 'orders' && <Orders />}
       {tab === 'team' && <Team />}
       {tab === 'settings' && <Settings />}
-
-      <p className="muted" style={{ textAlign: 'center', fontSize: 11, marginTop: 32, letterSpacing: '0.05em' }}>
-        Gatekeep Shop · built by swiss9
-      </p>
     </section>
   );
 }
