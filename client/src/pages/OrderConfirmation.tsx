@@ -11,11 +11,13 @@ import { useToast } from '../context/ToastContext';
 import { useRouter } from '../App';
 
 type Props = { orderCode: string };
+
 type State =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
   | { kind: 'ready'; order: Order; store: StoreSettings; supportUsername: string | null };
-type Download = { product_name: string; signed_url: string };
+
+type Download = { product_name: string; file_index: number; file_total: number; signed_url: string };
 
 const POLL_INTERVAL_MS = 5000;
 const POLL_MAX_MS = 15 * 60 * 1000;
@@ -67,6 +69,26 @@ export function OrderConfirmation({ orderCode }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shouldPoll]);
 
+  // Auto-load downloads once the order is paid — the buyer paid, they
+  // should see their files immediately without an extra tap.
+  const isPaid =
+    state.kind === 'ready' &&
+    state.order.status !== 'Pending payment' &&
+    state.order.status !== 'Cancelled';
+
+  useEffect(() => {
+    if (!isPaid || state.kind !== 'ready') return;
+    if (downloads !== null) return;
+    let cancelled = false;
+    setLoadingDownloads(true);
+    api.orderDownloads(state.order.id)
+      .then(({ downloads: dls }) => { if (!cancelled) setDownloads(dls); })
+      .catch(() => { if (!cancelled) setDownloads([]); })
+      .finally(() => { if (!cancelled) setLoadingDownloads(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPaid]);
+
   const refresh = async () => {
     setRefreshing(true);
     try { setState(await load()); }
@@ -74,7 +96,7 @@ export function OrderConfirmation({ orderCode }: Props) {
     finally { setRefreshing(false); }
   };
 
-  const loadDownloads = async () => {
+  const reloadDownloads = async () => {
     if (state.kind !== 'ready') return;
     setLoadingDownloads(true);
     try {
@@ -87,10 +109,6 @@ export function OrderConfirmation({ orderCode }: Props) {
 
   const currency = state.kind === 'ready' ? state.store.currency_symbol : '$';
   const method = state.kind === 'ready' ? state.order.payment_method : '';
-  const isPaid =
-    state.kind === 'ready' &&
-    state.order.status !== 'Pending payment' &&
-    state.order.status !== 'Cancelled';
   const isCancelled = state.kind === 'ready' && state.order.status === 'Cancelled';
   const proofSubmitted = state.kind === 'ready' && !!state.order.payment_proof_submitted_at;
 
@@ -141,7 +159,12 @@ export function OrderConfirmation({ orderCode }: Props) {
     : isCancelled ? 'Order cancelled'
     : proofSubmitted ? 'Awaiting confirmation'
     : 'Awaiting payment';
-  const subline = isPaid ? "We'll message you on Telegram when your order ships."
+
+  const hasDownloads = downloads !== null && downloads.length > 0;
+  const subline = isPaid
+    ? hasDownloads
+      ? 'Your downloads are below. We\'ll message you on Telegram if anything ships.'
+      : 'We\'ll message you on Telegram when your order ships.'
     : isCancelled ? 'This order was cancelled. No payment was taken.'
     : proofSubmitted ? 'Proof received. The seller will confirm your payment shortly.'
     : `Total ${formatMoney(order.total, currency)}`;
@@ -177,25 +200,33 @@ export function OrderConfirmation({ orderCode }: Props) {
         <p className="msg" style={{ maxWidth: 320 }}>{subline}</p>
       </div>
 
-      {isPaid && order.status === 'Delivered' && (
+      {/* Downloads — available on any paid order, not just Delivered. */}
+      {isPaid && (
         <div className="panel" style={{ marginTop: 20 }}>
-          <span className="section-title" style={{ display: 'block', marginBottom: 10 }}>Your downloads</span>
-          {downloads === null ? (
-            <button type="button" className="btn-primary" style={{ height: 44, fontSize: 14 }}
-              disabled={loadingDownloads} onClick={loadDownloads}>
-              {loadingDownloads ? 'Fetching…' : 'Show download links'}
-            </button>
-          ) : downloads.length === 0 ? (
+          <span className="section-title" style={{ display: 'block', marginBottom: 10 }}>
+            Your downloads
+          </span>
+          {loadingDownloads && downloads === null ? (
+            <p className="muted" style={{ fontSize: 13 }}>Fetching files…</p>
+          ) : downloads === null || downloads.length === 0 ? (
             <p className="muted" style={{ fontSize: 13 }}>No downloadable items in this order.</p>
           ) : (
-            downloads.map((d, i) => (
-              <div key={i} style={{ border: '1px solid var(--line)', borderRadius: 10, padding: '10px 12px', marginBottom: 8 }}>
-                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>{d.product_name}</div>
-                <a href={d.signed_url} target="_blank" rel="noreferrer" className="link-btn">
-                  Download (24h link)
-                </a>
-              </div>
-            ))
+            <>
+              {downloads.map((d, i) => (
+                <div key={i} style={{ border: '1px solid var(--line)', borderRadius: 10, padding: '10px 12px', marginBottom: 8 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>
+                    {d.product_name}
+                    {d.file_total > 1 ? ` · ${d.file_index + 1} of ${d.file_total}` : ''}
+                  </div>
+                  <a href={d.signed_url} target="_blank" rel="noreferrer" className="link-btn">
+                    Download (24h link)
+                  </a>
+                </div>
+              ))}
+              <button type="button" className="link-btn" style={{ marginTop: 6 }} onClick={reloadDownloads}>
+                Refresh download links
+              </button>
+            </>
           )}
         </div>
       )}
@@ -371,4 +402,4 @@ export function OrderConfirmation({ orderCode }: Props) {
       </button>
     </section>
   );
-}
+                                       }
