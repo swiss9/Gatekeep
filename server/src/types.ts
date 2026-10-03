@@ -11,7 +11,12 @@ export type Profile = {
 };
 
 export type PaymentProvider =
-  | 'manual' | 'cod' | 'bank' | 'crypto' | 'stars' | 'stripe';
+  | 'manual'
+  | 'cod'
+  | 'bank'
+  | 'crypto'
+  | 'stars'
+  | 'stripe';
 
 export type StoreSettings = {
   id: 1;
@@ -39,6 +44,7 @@ export type StoreSettings = {
   stars_rate: number;
   bank_enabled: boolean;
   bank_details: string;
+  cod_enabled: boolean;
   crypto_enabled: boolean;
   crypto_btc: string;
   crypto_eth: string;
@@ -76,8 +82,12 @@ export type Product = {
 };
 
 export type OrderStatus =
-  | 'Pending payment' | 'Paid' | 'Processing'
-  | 'In transit' | 'Delivered' | 'Cancelled';
+  | 'Pending payment'
+  | 'Paid'
+  | 'Processing'
+  | 'In transit'
+  | 'Delivered'
+  | 'Cancelled';
 
 export type Order = {
   id: string;
