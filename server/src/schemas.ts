@@ -12,15 +12,9 @@ export const OrderItemInputSchema = z.object({
 });
 
 export const PAYMENT_METHODS = [
-  'manual',
-  'cod',
-  'bank',
-  'crypto',
-  'stars',
-  'stripe',
+  'manual', 'cod', 'bank', 'crypto', 'stars', 'stripe',
 ] as const;
 
-// --- Validators for user-supplied text fields ---
 const NAME_RE = /^[\p{L}][\p{L}\s'.\-]{1,79}$/u;
 const ADDRESS_RE = /^(?=.*[\p{L}])(?=.*\d)[\p{L}\p{N}\s.,'#/\-]{4,239}$/u;
 const CITY_RE = /^[\p{L}][\p{L}\s'\-]{1,79}$/u;
@@ -35,29 +29,11 @@ export const OrderCreateSchema = z.object({
   items: z.array(OrderItemInputSchema).min(1).max(50),
   delivery: z.object({
     name: z.string().trim().regex(NAME_RE, 'Enter a real name'),
-    address: z
-      .string()
-      .trim()
-      .max(240)
-      .optional()
-      .default('')
-      .refine(
-        (v) => v === '' || ADDRESS_RE.test(v),
-        'Enter a full address (must include a number)',
-      ),
-    city: z
-      .string()
-      .trim()
-      .max(120)
-      .optional()
-      .default('')
+    address: z.string().trim().max(240).optional().default('')
+      .refine((v) => v === '' || ADDRESS_RE.test(v), 'Enter a full address (must include a number)'),
+    city: z.string().trim().max(120).optional().default('')
       .refine((v) => v === '' || CITY_RE.test(v), 'Enter a real city name'),
-    zip: z
-      .string()
-      .trim()
-      .max(20)
-      .optional()
-      .default('')
+    zip: z.string().trim().max(20).optional().default('')
       .refine((v) => v === '' || ZIP_RE.test(v), 'Enter a valid ZIP / postal code'),
   }),
   payment_method: z.enum(PAYMENT_METHODS),
@@ -67,12 +43,7 @@ export type OrderCreateInput = z.infer<typeof OrderCreateSchema>;
 export const ProofSubmitSchema = z
   .object({
     note: z.string().trim().max(500).optional().default(''),
-    tx_hash: z
-      .string()
-      .trim()
-      .max(200)
-      .optional()
-      .default('')
+    tx_hash: z.string().trim().max(200).optional().default('')
       .refine((v) => v === '' || TX_RE.test(v), 'Enter a valid transaction hash'),
     proof_url: z.string().max(500).optional().default(''),
   })
@@ -93,79 +64,77 @@ export const ProductCreateSchema = z.object({
   delivery_type: z.enum(['physical', 'digital', 'none']).default('physical'),
   digital_file_path: z.string().nullable().optional(),
 });
-
 export const ProductUpdateSchema = ProductCreateSchema.partial();
 
 export const CategoryCreateSchema = z.object({
   name: z.string().trim().min(1).max(80),
   position: z.number().int().min(0).optional(),
 });
-
 export const CategoryUpdateSchema = CategoryCreateSchema.partial();
 
-export const SettingsUpdateSchema = z.object({
-  store_name: z.string().trim().min(1).max(80).optional(),
-  store_tagline: z.string().trim().max(80).optional(),
-  currency_symbol: z.string().trim().min(1).max(4).optional(),
-  currency_code: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .regex(/^[a-z]{3}$/)
-    .optional(),
-  // coerce: PostgREST returns numeric columns as strings
-  shipping_threshold: z.coerce.number().nonnegative().optional(),
-  shipping_cost: z.coerce.number().nonnegative().optional(),
-  banner_enabled: z.boolean().optional(),
-  banner_eyebrow: z.string().trim().max(40).optional(),
-  banner_title: z.string().trim().max(120).optional(),
-  banner_subtitle: z.string().trim().max(160).optional(),
-  banner_cta: z.string().trim().max(40).optional(),
-  banner_cta_action: z.enum(['all', 'category', 'search']).optional(),
-  banner_color: z.enum(['mint', 'blue', 'pink', 'yellow', 'neutral']).optional(),
-  payment_provider: z.enum(PAYMENT_METHODS).optional(),
-  payment_url: z.string().max(500).optional(),
-  payment_ton_address: z.string().max(120).optional(),
-  perks_enabled: z.boolean().optional(),
-  perk_1_text: z.string().trim().max(80).optional(),
-  perk_2_text: z.string().trim().max(80).optional(),
-  perk_3_text: z.string().trim().max(80).optional(),
-  stars_enabled: z.boolean().optional(),
-  stars_rate: z.coerce.number().positive().max(10_000).optional(),
-  bank_enabled: z.boolean().optional(),
-  bank_details: z.string().max(2000).optional(),
-  crypto_enabled: z.boolean().optional(),
-  crypto_btc: z
-    .string()
-    .max(200)
-    .optional()
-    .refine((v) => !v || v === '' || BTC_RE.test(v), 'Not a valid BTC address'),
-  crypto_eth: z
-    .string()
-    .max(200)
-    .optional()
-    .refine((v) => !v || v === '' || ETH_RE.test(v), 'Not a valid ETH address'),
-  crypto_usdt_trc20: z
-    .string()
-    .max(200)
-    .optional()
-    .refine((v) => !v || v === '' || TRC20_RE.test(v), 'Not a valid TRC20 address'),
-  crypto_ton: z
-    .string()
-    .max(200)
-    .optional()
-    .refine((v) => !v || v === '' || TON_RE.test(v), 'Not a valid TON address'),
-  stripe_enabled: z.boolean().optional(),
-});
+/**
+ * Settings. Numeric columns come back from PostgREST as strings — all
+ * numbers are coerced.
+ *
+ * Crypto address validation only runs when crypto_enabled is true, so a
+ * store can toggle every provider off without triggering address errors
+ * on empty (or stale) crypto fields.
+ */
+export const SettingsUpdateSchema = z
+  .object({
+    store_name: z.string().trim().min(1).max(80).optional(),
+    store_tagline: z.string().trim().max(80).optional(),
+    currency_symbol: z.string().trim().min(1).max(4).optional(),
+    currency_code: z.string().trim().toLowerCase().regex(/^[a-z]{3}$/).optional(),
+    shipping_threshold: z.coerce.number().nonnegative().optional(),
+    shipping_cost: z.coerce.number().nonnegative().optional(),
+    banner_enabled: z.boolean().optional(),
+    banner_eyebrow: z.string().trim().max(40).optional(),
+    banner_title: z.string().trim().max(120).optional(),
+    banner_subtitle: z.string().trim().max(160).optional(),
+    banner_cta: z.string().trim().max(40).optional(),
+    banner_cta_action: z.enum(['all', 'category', 'search']).optional(),
+    banner_color: z.enum(['mint', 'blue', 'pink', 'yellow', 'neutral']).optional(),
+    payment_provider: z.enum(PAYMENT_METHODS).optional(),
+    payment_url: z.string().max(500).optional(),
+    payment_ton_address: z.string().max(120).optional(),
+    perks_enabled: z.boolean().optional(),
+    perk_1_text: z.string().trim().max(80).optional(),
+    perk_2_text: z.string().trim().max(80).optional(),
+    perk_3_text: z.string().trim().max(80).optional(),
+    stars_enabled: z.boolean().optional(),
+    stars_rate: z.coerce.number().positive().max(10_000).optional(),
+    bank_enabled: z.boolean().optional(),
+    bank_details: z.string().max(2000).optional(),
+    crypto_enabled: z.boolean().optional(),
+    crypto_btc: z.string().max(200).optional(),
+    crypto_eth: z.string().max(200).optional(),
+    crypto_usdt_trc20: z.string().max(200).optional(),
+    crypto_ton: z.string().max(200).optional(),
+    stripe_enabled: z.boolean().optional(),
+  })
+  .superRefine((val, ctx) => {
+    // Only validate crypto addresses when crypto is turned on.
+    if (!val.crypto_enabled) return;
+
+    const checks: Array<[keyof typeof val, RegExp, string]> = [
+      ['crypto_btc', BTC_RE, 'Not a valid BTC address'],
+      ['crypto_eth', ETH_RE, 'Not a valid ETH address'],
+      ['crypto_usdt_trc20', TRC20_RE, 'Not a valid TRC20 address'],
+      ['crypto_ton', TON_RE, 'Not a valid TON address'],
+    ];
+    for (const [field, re, msg] of checks) {
+      const v = val[field];
+      if (typeof v === 'string' && v.trim() !== '' && !re.test(v.trim())) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: msg });
+      }
+    }
+  });
 
 export const OrderStatusUpdateSchema = z.object({
   status: z.enum([
-    'Pending payment',
-    'Paid',
-    'Processing',
-    'In transit',
-    'Delivered',
-    'Cancelled',
+    'Pending payment', 'Paid', 'Processing',
+    'In transit', 'Delivered', 'Cancelled',
   ]),
 });
 
@@ -182,13 +151,6 @@ export const TransferSchema = z.object({
 });
 
 export const VALIDATORS = {
-  NAME_RE,
-  ADDRESS_RE,
-  CITY_RE,
-  ZIP_RE,
-  TX_RE,
-  BTC_RE,
-  ETH_RE,
-  TRC20_RE,
-  TON_RE,
+  NAME_RE, ADDRESS_RE, CITY_RE, ZIP_RE, TX_RE,
+  BTC_RE, ETH_RE, TRC20_RE, TON_RE,
 };
