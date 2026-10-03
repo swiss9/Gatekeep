@@ -315,10 +315,15 @@ export const api = {
   deleteProduct: (id: string) =>
     request<{ ok: true }>(`/api/admin/products/${id}`, { method: 'DELETE' }),
 
-  adminOrders: (status?: string) =>
-    request<{ orders: OrderWithReceipt[]; items: OrderItem[] }>(
-      `/api/admin/orders${status && status !== 'All' ? `?status=${encodeURIComponent(status)}` : ''}`,
-    ),
+  adminOrders: (status?: string, includeStale = false) => {
+    const params = new URLSearchParams();
+    if (status && status !== 'All') params.set('status', status);
+    if (includeStale) params.set('include_stale', '1');
+    const qs = params.toString();
+    return request<{ orders: OrderWithReceipt[]; items: OrderItem[] }>(
+      `/api/admin/orders${qs ? `?${qs}` : ''}`,
+    );
+  },
 
   updateOrderStatus: (id: string, status: OrderStatus) =>
     request<{ order: Order }>(`/api/admin/orders/${id}`, { method: 'PATCH', body: { status } }),
