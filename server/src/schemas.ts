@@ -62,7 +62,7 @@ export const ProductCreateSchema = z.object({
   stock: z.coerce.number().int().min(0).max(1_000_000).default(0),
   active: z.boolean().default(true),
   delivery_type: z.enum(['physical', 'digital', 'none']).default('physical'),
-  digital_file_path: z.string().nullable().optional(),
+  digital_file_paths: z.array(z.string()).default([]),
 });
 export const ProductUpdateSchema = ProductCreateSchema.partial();
 
@@ -72,14 +72,6 @@ export const CategoryCreateSchema = z.object({
 });
 export const CategoryUpdateSchema = CategoryCreateSchema.partial();
 
-/**
- * Settings. Numeric columns come back from PostgREST as strings — all
- * numbers are coerced.
- *
- * Crypto address validation only runs when crypto_enabled is true, so a
- * store can toggle every provider off without triggering address errors
- * on empty (or stale) crypto fields.
- */
 export const SettingsUpdateSchema = z
   .object({
     store_name: z.string().trim().min(1).max(80).optional(),
@@ -114,9 +106,7 @@ export const SettingsUpdateSchema = z
     stripe_enabled: z.boolean().optional(),
   })
   .superRefine((val, ctx) => {
-    // Only validate crypto addresses when crypto is turned on.
     if (!val.crypto_enabled) return;
-
     const checks: Array<[keyof typeof val, RegExp, string]> = [
       ['crypto_btc', BTC_RE, 'Not a valid BTC address'],
       ['crypto_eth', ETH_RE, 'Not a valid ETH address'],
@@ -141,11 +131,9 @@ export const OrderStatusUpdateSchema = z.object({
 export const InviteCreateSchema = z.object({
   grants_role: z.enum(['admin', 'superadmin']),
 });
-
 export const RoleUpdateSchema = z.object({
   role: z.enum(['admin', 'superadmin']),
 });
-
 export const TransferSchema = z.object({
   target_id: z.string().uuid(),
 });
