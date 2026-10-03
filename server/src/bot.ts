@@ -53,7 +53,11 @@ async function sendMessage(
 }
 
 function webAppButton(label: string): ReplyMarkup {
-  return { reply_markup: { inline_keyboard: [[{ text: label, web_app: { url: env.MINI_APP_URL } }]] } };
+  return {
+    reply_markup: {
+      inline_keyboard: [[{ text: label, web_app: { url: env.MINI_APP_URL } }]],
+    },
+  };
 }
 
 async function loadSettings(): Promise<{ store_name: string; currency_symbol: string }> {
@@ -119,9 +123,12 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
 }
 
 /**
- * Post-Paid-transition work. Signs every digital file path and sends one
- * message per digital product, then reports whether the order has
- * anything that needs shipping.
+ * Post-Paid-transition work. Signs every digital file path and sends
+ * one Telegram message per digital product, then reports whether the
+ * order has anything that needs shipping.
+ *
+ * Idempotent: safe to call twice; the buyer just gets fresh signed
+ * links.
  */
 export async function finalizeDigitalDelivery(order: {
   id: string;
@@ -324,9 +331,10 @@ export async function createStarsInvoiceLink(params: {
 }
 
 /**
- * New-order notification for admins. Includes payment method and a
- * timestamp so the admin knows exactly when and how the order was
- * placed, right in the Telegram message — no need to open the app.
+ * New-order notification for admins. Includes the payment method so the
+ * admin knows at a glance what to do. No timestamp — the notification
+ * arrives seconds after the order, and Telegram shows its own sent-time
+ * in the recipient's device timezone.
  */
 export async function notifyAdminsOfOrder(order: {
   code: string;
@@ -334,7 +342,6 @@ export async function notifyAdminsOfOrder(order: {
   city: string;
   total: number;
   payment_method: string;
-  created_at?: string;
 }): Promise<void> {
   const { data: admins } = await supabaseAdmin
     .from('profiles')
@@ -344,14 +351,12 @@ export async function notifyAdminsOfOrder(order: {
 
   const { currency_symbol } = await loadSettings();
   const methodLabel = prettifyMethod(order.payment_method);
-  const when = formatWhen(order.created_at ?? new Date().toISOString());
 
   const text =
     `<b>New order</b>\n\n` +
     `#${order.code}\n` +
     `${order.customer} · ${order.city}\n` +
-    `${currency_symbol}${order.total} · ${methodLabel}\n` +
-    `<i>${when}</i>`;
+    `${currency_symbol}${order.total} · ${methodLabel}`;
 
   for (const a of admins) {
     try {
@@ -363,7 +368,7 @@ export async function notifyAdminsOfOrder(order: {
 }
 
 function prettifyMethod(method: string): string {
-  // "proof submitted" suffix is used on the proof-notification variant.
+  // " · proof submitted" suffix is used on the proof-notification variant.
   if (method.endsWith(' · proof submitted')) {
     const base = method.slice(0, -' · proof submitted'.length);
     return `${prettifyMethod(base)} · proof submitted`;
@@ -376,20 +381,6 @@ function prettifyMethod(method: string): string {
     case 'cod': return 'Cash on Delivery';
     case 'manual': return 'Arrange with seller';
     default: return method.replace(/_/g, ' ');
-  }
-}
-
-function formatWhen(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      timeZone: 'UTC',
-    }) + ' UTC';
-  } catch {
-    return iso;
   }
 }
 
@@ -496,5 +487,5 @@ export async function broadcastNewProduct(product: {
   console.log(`[bot] broadcast sent to ${sent}/${profiles.length} buyers`);
 }
 
-// Type-only import reference (prevents unused import warning).
+// Type-only import reference so the Order import survives tree shaking.
 void (undefined as unknown as Order);
