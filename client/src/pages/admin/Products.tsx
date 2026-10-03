@@ -30,7 +30,7 @@ type FormState = {
   image_url: string;
   active: boolean;
   delivery_type: DeliveryType;
-  digital_file_path: string;
+  digital_file_paths: string[];
 };
 
 const emptyForm = (): FormState => ({
@@ -43,8 +43,13 @@ const emptyForm = (): FormState => ({
   image_url: '',
   active: true,
   delivery_type: 'physical',
-  digital_file_path: '',
+  digital_file_paths: [],
 });
+
+function basename(path: string): string {
+  const parts = path.split('/');
+  return parts[parts.length - 1] ?? path;
+}
 
 export function Products() {
   const toast = useToast();
@@ -90,7 +95,7 @@ export function Products() {
       image_url: p.image_url ?? '',
       active: p.active,
       delivery_type: p.delivery_type,
-      digital_file_path: p.digital_file_path ?? '',
+      digital_file_paths: p.digital_file_paths ?? [],
     });
     setFormOpen(true);
   };
@@ -108,17 +113,41 @@ export function Products() {
     }
   };
 
-  const onDigitalFile = async (file: File) => {
+  const onDigitalFiles = async (files: FileList) => {
     setUploadingFile(true);
     try {
-      const path = await uploadDigitalFile(file);
-      setForm((f) => ({ ...f, digital_file_path: path }));
-      toast('File uploaded');
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Upload failed');
+      const uploaded: string[] = [];
+      for (const file of Array.from(files)) {
+        try {
+          const path = await uploadDigitalFile(file);
+          uploaded.push(path);
+        } catch (err) {
+          toast(
+            `${file.name}: ${err instanceof Error ? err.message : 'failed'}`,
+          );
+        }
+      }
+      if (uploaded.length > 0) {
+        setForm((f) => ({
+          ...f,
+          digital_file_paths: [...f.digital_file_paths, ...uploaded],
+        }));
+        toast(
+          uploaded.length === 1
+            ? 'File uploaded'
+            : `${uploaded.length} files uploaded`,
+        );
+      }
     } finally {
       setUploadingFile(false);
     }
+  };
+
+  const removeDigitalFile = (idx: number) => {
+    setForm((f) => ({
+      ...f,
+      digital_file_paths: f.digital_file_paths.filter((_, i) => i !== idx),
+    }));
   };
 
   const save = async () => {
@@ -129,8 +158,8 @@ export function Products() {
     if (form.delivery_type === 'physical' && (!Number.isInteger(stock) || stock < 0)) {
       return toast('Enter valid stock');
     }
-    if (form.delivery_type === 'digital' && !form.digital_file_path) {
-      return toast('Upload a digital file first');
+    if (form.delivery_type === 'digital' && form.digital_file_paths.length === 0) {
+      return toast('Upload at least one digital file');
     }
 
     const body: ProductWriteBody = {
@@ -143,7 +172,7 @@ export function Products() {
       image_url: form.image_url || null,
       active: form.active,
       delivery_type: form.delivery_type,
-      digital_file_path: form.digital_file_path || null,
+      digital_file_paths: form.digital_file_paths,
     };
 
     setBusy(true);
@@ -206,7 +235,7 @@ export function Products() {
                 {p.delivery_type === 'physical'
                   ? `${p.stock} in stock`
                   : p.delivery_type === 'digital'
-                    ? 'Digital'
+                    ? `Digital · ${p.digital_file_paths?.length ?? 0} file${(p.digital_file_paths?.length ?? 0) === 1 ? '' : 's'}`
                     : 'No delivery'}
               </div>
             </div>
@@ -279,7 +308,9 @@ export function Products() {
               <label>Delivery</label>
               <select
                 value={form.delivery_type}
-                onChange={(e) => setForm({ ...form, delivery_type: e.target.value as DeliveryType })}
+                onChange={(e) =>
+                  setForm({ ...form, delivery_type: e.target.value as DeliveryType })
+                }
               >
                 {DELIVERY.map((d) => (
                   <option key={d.id} value={d.id}>
@@ -291,54 +322,69 @@ export function Products() {
 
             {form.delivery_type === 'digital' && (
               <div className="field">
-                <label>Digital file</label>
-                {!form.digital_file_path ? (
-                  <input
-                    type="file"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) void onDigitalFile(f);
-                    }}
-                    disabled={uploadingFile}
-                  />
-                ) : (
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 10,
-                      padding: '10px 12px',
-                      border: '1px solid var(--line)',
-                      borderRadius: 10,
-                      background: 'var(--chip)',
-                    }}
-                  >
-                    <span
-                      className="muted"
-                      style={{
-                        fontSize: 12,
-                        flex: 1,
-                        minWidth: 0,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        fontFamily: "'JetBrains Mono', monospace",
-                      }}
-                    >
-                      {form.digital_file_path.slice(0, 40)}…
-                    </span>
-                    <button
-                      type="button"
-                      className="x-btn"
-                      aria-label="Remove file"
-                      onClick={() => setForm({ ...form, digital_file_path: '' })}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                        <path d="M6 6l12 12M18 6 6 18" />
-                      </svg>
-                    </button>
+                <label>
+                  Digital files
+                  {form.digital_file_paths.length > 0 &&
+                    ` · ${form.digital_file_paths.length}`}
+                </label>
+
+                {form.digital_file_paths.length > 0 && (
+                  <div style={{ marginBottom: 10 }}>
+                    {form.digital_file_paths.map((path, idx) => (
+                      <div
+                        key={idx}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: '8px 12px',
+                          border: '1px solid var(--line)',
+                          borderRadius: 10,
+                          background: 'var(--chip)',
+                          marginBottom: 6,
+                        }}
+                      >
+                        <span
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            fontFamily: "'JetBrains Mono', monospace",
+                            fontSize: 11.5,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {basename(path)}
+                        </span>
+                        <button
+                          type="button"
+                          className="x-btn"
+                          aria-label="Remove file"
+                          onClick={() => removeDigitalFile(idx)}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                            <path d="M6 6l12 12M18 6 6 18" />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 )}
+
+                <input
+                  type="file"
+                  multiple
+                  onChange={(e) => {
+                    const files = e.target.files;
+                    if (files && files.length > 0) void onDigitalFiles(files);
+                    e.target.value = '';
+                  }}
+                  disabled={uploadingFile}
+                />
+                <p className="muted" style={{ fontSize: 11, marginTop: 6 }}>
+                  Select multiple files at once, or add more later.
+                </p>
               </div>
             )}
 
@@ -411,6 +457,7 @@ export function Products() {
                   onChange={(e) => {
                     const f = e.target.files?.[0];
                     if (f) void onImageFile(f);
+                    e.target.value = '';
                   }}
                   disabled={uploading}
                 />
@@ -478,4 +525,4 @@ export function Products() {
       )}
     </>
   );
-      }
+}
