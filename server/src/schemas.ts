@@ -98,6 +98,7 @@ export const SettingsUpdateSchema = z
     stars_rate: z.coerce.number().positive().max(10_000).optional(),
     bank_enabled: z.boolean().optional(),
     bank_details: z.string().max(2000).optional(),
+    cod_enabled: z.boolean().optional(),
     crypto_enabled: z.boolean().optional(),
     crypto_btc: z.string().max(200).optional(),
     crypto_eth: z.string().max(200).optional(),
