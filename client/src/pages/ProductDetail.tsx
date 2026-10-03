@@ -90,8 +90,6 @@ export function ProductDetail({ id }: Props) {
   const maxQty = isDigital || isNone ? 1 : Math.min(product.stock, 9);
   const saved = wishlist.has(product.id);
 
-  // Perks fix: build only from non-empty text. Blank fields render
-  // nothing; if all three are blank the whole block disappears.
   const activePerks = [
     { icon: PERK_ICON.shipping, text: store.perk_1_text },
     { icon: PERK_ICON.returns, text: store.perk_2_text },
@@ -130,9 +128,6 @@ export function ProductDetail({ id }: Props) {
       <div className="detail-head">
         <h2 className="detail-name h-display">{product.name}</h2>
         <span className="detail-price">{formatMoney(product.price, currency)}</span>
-      </div>
-      <div className="detail-rating">
-        ★ {Number(product.rating).toFixed(1)} · {product.review_count} reviews
       </div>
       <p className="detail-desc">{product.description || 'No description yet.'}</p>
 
