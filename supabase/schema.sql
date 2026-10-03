@@ -33,9 +33,6 @@ alter table public.profiles enable row level security;
 
 -- =====================================================================
 -- is_admin() helper
--- security definer so it can read profiles from inside a policy on
--- profiles without recursing. stable because the answer does not
--- change within a statement.
 -- =====================================================================
 create function public.is_admin(uid uuid)
 returns boolean
@@ -60,9 +57,7 @@ create policy profiles_read_admin on public.profiles
 
 -- =====================================================================
 -- Role-change guard
--- Only the server (service_role) may change a role. PostgREST sets the
--- effective Postgres role via SET LOCAL ROLE, so current_user is the
--- right thing to check here — not the JWT claim.
+-- Only the server (service_role) may change a role.
 -- =====================================================================
 create function public.prevent_role_change()
 returns trigger
@@ -84,8 +79,6 @@ create trigger trg_prevent_role_change
 
 -- =====================================================================
 -- store_settings (singleton row, id always 1)
--- Every storefront-level config lives here. Admin edits via the app;
--- the server writes; everyone reads.
 -- =====================================================================
 create table public.store_settings (
   id                  int primary key default 1 check (id = 1),
@@ -108,7 +101,7 @@ create table public.store_settings (
   banner_color        text not null default 'mint'
                         check (banner_color in ('mint','blue','pink','yellow','neutral')),
 
-  -- Product page perks (three configurable bullets)
+  -- Product page perks
   perks_enabled       boolean not null default true,
   perk_1_text         text not null default 'Free shipping over $60',
   perk_2_text         text not null default '30-day easy returns',
@@ -128,6 +121,9 @@ create table public.store_settings (
   -- Bank transfer
   bank_enabled        boolean not null default false,
   bank_details        text not null default '',
+
+  -- Cash on Delivery
+  cod_enabled         boolean not null default false,
 
   -- Crypto
   crypto_enabled      boolean not null default false,
@@ -176,9 +172,7 @@ create policy categories_write_admin on public.categories
 -- =====================================================================
 -- products
 -- digital_file_paths is an array of storage paths inside the private
--- 'digital-goods' bucket. Products can ship multiple files (e.g. a
--- PDF + a zip of assets + a README); the delivery flow signs each one
--- separately and sends a download button per file.
+-- 'digital-goods' bucket. Products can ship multiple files.
 -- =====================================================================
 create table public.products (
   id                 uuid primary key default gen_random_uuid(),
@@ -207,7 +201,6 @@ create index idx_products_delivery
 
 alter table public.products enable row level security;
 
--- Public sees active products only. Admins see everything.
 create policy products_read_active on public.products
   for select using (active = true or public.is_admin(auth.uid()));
 
@@ -235,22 +228,17 @@ create table public.orders (
   shipping               numeric not null,
   total                  numeric not null,
 
-  -- Confirmation timestamps + who confirmed
   payment_confirmed_at   timestamptz,
   paid_confirmed_at      timestamptz,
   paid_confirmed_by      uuid references public.profiles(id) on delete set null,
   delivered_at           timestamptz,
 
-  -- Proof of payment (buyer-submitted)
   payment_proof_url          text,
   payment_proof_note         text,
   payment_tx_hash            text,
   payment_proof_submitted_at timestamptz,
 
-  -- External checkout URL (Stars invoice / Stripe session)
   payment_redirect_url   text,
-
-  -- True if paid via admin "Simulate payment" test action
   payment_simulated      boolean not null default false,
 
   created_at             timestamptz not null default now()
@@ -310,8 +298,6 @@ create policy order_items_insert on public.order_items
 
 -- =====================================================================
 -- admin_invites
--- One-time tokens embedded in Telegram startapp links. Redeemed by the
--- server on /api/auth/validate. Not exposed to clients directly.
 -- =====================================================================
 create table public.admin_invites (
   id           uuid primary key default gen_random_uuid(),
@@ -339,10 +325,6 @@ create policy admin_invites_write on public.admin_invites
 
 -- =====================================================================
 -- decrement_stock()
--- Atomic compare-and-decrement. The UPDATE ... WHERE stock >= qty
--- takes a row lock and writes in one statement, so concurrent orders
--- cannot lose an update. Returns false if stock was insufficient.
--- Called only by the server; explicitly revoked from clients.
 -- =====================================================================
 create function public.decrement_stock(
   p_product_id uuid,
@@ -371,9 +353,6 @@ $$;
 
 -- =====================================================================
 -- Storage buckets
--- products      — public read, admin write. Product cover images.
--- digital-goods — private, admin write only. Delivered via signed URL.
--- receipts      — private, buyer write to their own folder, admin read.
 -- =====================================================================
 
 insert into storage.buckets (id, name, public) values
@@ -382,7 +361,6 @@ insert into storage.buckets (id, name, public) values
   ('receipts',      'receipts',      false)
 on conflict (id) do nothing;
 
--- ---- products bucket policies ----
 create policy "products_storage_read" on storage.objects
   for select using (bucket_id = 'products');
 
@@ -399,7 +377,6 @@ create policy "products_storage_delete" on storage.objects
   for delete to authenticated
   using (bucket_id = 'products' and public.is_admin(auth.uid()));
 
--- ---- digital-goods bucket policies ----
 create policy "digital_goods_admin_read" on storage.objects
   for select to authenticated
   using (bucket_id = 'digital-goods' and public.is_admin(auth.uid()));
@@ -417,9 +394,6 @@ create policy "digital_goods_admin_delete" on storage.objects
   for delete to authenticated
   using (bucket_id = 'digital-goods' and public.is_admin(auth.uid()));
 
--- ---- receipts bucket policies ----
--- Path convention: <user_id>/<order_id>.<ext>. The folder prefix is
--- the only thing RLS uses to scope reads/writes to the owning buyer.
 create policy "receipts_insert_own" on storage.objects
   for insert to authenticated
   with check (
@@ -439,12 +413,6 @@ create policy "receipts_read_own_or_admin" on storage.objects
 
 -- =====================================================================
 -- Grants
--- Supabase is phasing out automatic grants. Without these, the anon
--- key, the authenticated JWT, and the server's service role cannot
--- reach the tables, and every request fails with "permission denied".
---
--- Narrow on anon/authenticated (DML only, no TRUNCATE/REFERENCES),
--- broad on service_role (server owns the data).
 -- =====================================================================
 
 grant usage on schema public to anon, authenticated, service_role;
@@ -459,18 +427,14 @@ grant usage, select on all sequences in schema public
 
 grant all on all sequences in schema public to service_role;
 
--- is_admin() is called from RLS policies, so anon/authenticated need
--- EXECUTE on it. The functions below get their grants set explicitly.
 grant execute on function public.is_admin(uuid)
   to anon, authenticated, service_role;
 
--- decrement_stock must only be reachable by the server.
 revoke all on function public.decrement_stock(uuid, int)
   from public, anon, authenticated;
 grant execute on function public.decrement_stock(uuid, int)
   to service_role;
 
--- Future tables/functions created in public inherit these grants.
 alter default privileges in schema public
   grant select, insert, update, delete on tables to anon, authenticated;
 alter default privileges in schema public
