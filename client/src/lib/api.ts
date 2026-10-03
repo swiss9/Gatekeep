@@ -178,6 +178,8 @@ export type ProductWriteBody = {
   digital_file_path?: string | null;
 };
 
+// --- Client-side validation, mirrors server/src/schemas.ts ---
+
 export const VALIDATION = {
   NAME_RE: /^[\p{L}][\p{L}\s'.\-]{1,79}$/u,
   ADDRESS_RE: /^(?=.*[\p{L}])(?=.*\d)[\p{L}\p{N}\s.,'#/\-]{4,239}$/u,
@@ -235,13 +237,22 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   }
 
   if (!res.ok) {
-    const message =
-      data &&
-      typeof data === 'object' &&
-      'error' in data &&
-      typeof (data as { error: unknown }).error === 'string'
-        ? (data as { error: string }).error
-        : res.statusText;
+    let message = res.statusText;
+    if (data && typeof data === 'object') {
+      if ('error' in data && typeof (data as { error: unknown }).error === 'string') {
+        message = (data as { error: string }).error;
+      }
+      // Zod issue details — surface the first one so the toast says
+      // which field failed, not just "Validation failed".
+      if ('issues' in data && Array.isArray((data as { issues: unknown }).issues)) {
+        const issues = (data as { issues: Array<{ path?: string; message?: string }> }).issues;
+        const first = issues[0];
+        if (first && typeof first.message === 'string') {
+          const where = first.path ? `${first.path}: ` : '';
+          message = `${message} — ${where}${first.message}`;
+        }
+      }
+    }
     throw new ApiError(res.status, message);
   }
 
@@ -369,11 +380,6 @@ const ALLOWED_DIGITAL_TYPES = [
   'video/mp4',
 ];
 
-/**
- * Receipt uploads accept only images. The server enforces this by
- * verifying the file's magic bytes — a renaming or MIME spoof won't
- * get through. Client checks are just for nicer error messages.
- */
 const ALLOWED_RECEIPT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic'];
 
 async function uploadViaServer(
@@ -418,7 +424,6 @@ export async function uploadProductImage(file: File): Promise<string> {
   if (file.size > MAX_IMAGE_BYTES) {
     throw new ApiError(400, `Image too large (max ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)}MB).`);
   }
-  // Server verifies content. Client accept-list is defensive UX only.
   if (file.type && !ALLOWED_IMAGE_TYPES.includes(file.type)) {
     throw new ApiError(400, `Unsupported image type: ${file.type}.`);
   }
