@@ -40,6 +40,16 @@ const FILTERS: Filter[] = [
   'Cancelled',
 ];
 
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 export function Orders() {
   const toast = useToast();
   const [orders, setOrders] = useState<OrderWithReceipt[]>([]);
@@ -294,6 +304,59 @@ export function Orders() {
                     ))}
                   </div>
 
+                  {/* Order timeline */}
+                  <div
+                    style={{
+                      border: '1px solid var(--line)',
+                      borderRadius: 10,
+                      padding: 12,
+                      marginBottom: 12,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 10.5,
+                        fontWeight: 800,
+                        letterSpacing: '0.08em',
+                        textTransform: 'uppercase',
+                        color: 'var(--muted)',
+                        marginBottom: 8,
+                      }}
+                    >
+                      Timeline
+                    </div>
+                    <div className="sum-row" style={{ padding: '3px 0' }}>
+                      <span>Placed</span>
+                      <span className="val" style={{ fontSize: 12 }}>
+                        {formatDateTime(o.created_at)}
+                      </span>
+                    </div>
+                    {o.payment_proof_submitted_at && (
+                      <div className="sum-row" style={{ padding: '3px 0' }}>
+                        <span>Proof submitted</span>
+                        <span className="val" style={{ fontSize: 12 }}>
+                          {formatDateTime(o.payment_proof_submitted_at)}
+                        </span>
+                      </div>
+                    )}
+                    {o.payment_confirmed_at && (
+                      <div className="sum-row" style={{ padding: '3px 0' }}>
+                        <span>Payment confirmed</span>
+                        <span className="val" style={{ fontSize: 12 }}>
+                          {formatDateTime(o.payment_confirmed_at)}
+                        </span>
+                      </div>
+                    )}
+                    {o.delivered_at && (
+                      <div className="sum-row" style={{ padding: '3px 0' }}>
+                        <span>Delivered</span>
+                        <span className="val" style={{ fontSize: 12 }}>
+                          {formatDateTime(o.delivered_at)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
                   {hasProof && (
                     <div
                       style={{
@@ -407,12 +470,8 @@ export function Orders() {
               )}
 
               <div className="order-bottom">
-                <span className="order-date">
-                  {new Date(o.created_at).toLocaleDateString(undefined, {
-                    month: 'short',
-                    day: 'numeric',
-                    year: 'numeric',
-                  })}
+                <span className="order-date" style={{ fontSize: 11.5 }}>
+                  {formatDateTime(o.created_at)}
                 </span>
                 <select
                   value={o.status}
