@@ -9,6 +9,21 @@ import {
 } from '../bot.js';
 import type { Order, OrderItem, Product, Profile, StoreSettings } from '../types.js';
 
+// Pending orders older than this with no proof submitted are considered
+// abandoned and hidden from the default admin view. They still exist and
+// the buyer can still pay — they just don't clutter the dashboard.
+const STALE_PENDING_HOURS = 2;
+
+function staleCutoff(): string {
+  return new Date(Date.now() - STALE_PENDING_HOURS * 3600_000).toISOString();
+}
+
+function isFresh(o: Order): boolean {
+  if (o.status !== 'Pending payment') return true;
+  if (o.payment_proof_submitted_at) return true;
+  return new Date(o.created_at).getTime() > Date.now() - STALE_PENDING_HOURS * 3600_000;
+}
+
 export const adminRoutes: FastifyPluginAsync = async (app) => {
   const admin = { preHandler: requireRole('admin', 'superadmin') };
 
@@ -25,20 +40,28 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/api/admin/orders', admin, async (req, reply) => {
-    const q = req.query as { status?: string };
+    const q = req.query as { status?: string; include_stale?: string };
+    const includeStale = q.include_stale === '1';
+
     let query = supabaseAdmin.from('orders').select('*').order('created_at', { ascending: false });
     if (q.status && q.status !== 'All') query = query.eq('status', q.status);
 
     const { data: orders, error } = await query;
     if (error) throw new HttpError(500, error.message);
 
-    const ids = (orders as Order[] | null)?.map((o) => o.id) ?? [];
+    // Hide abandoned pending orders from the default list. They still
+    // exist in the DB; admins toggle include_stale=1 to see them.
+    const visible = includeStale
+      ? (orders as Order[]) ?? []
+      : ((orders as Order[]) ?? []).filter(isFresh);
+
+    const ids = visible.map((o) => o.id);
     const { data: items } = ids.length
       ? await supabaseAdmin.from('order_items').select('*').in('order_id', ids)
       : { data: [] as OrderItem[] };
 
     const ordersWithSigned: Array<Order & { payment_proof_signed_url: string | null }> = [];
-    for (const o of (orders as Order[]) ?? []) {
+    for (const o of visible) {
       let signed: string | null = null;
       if (o.payment_proof_url) {
         const { data } = await supabaseAdmin.storage
@@ -230,11 +253,17 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   app.get('/api/admin/overview', admin, async (_req, reply) => {
     const { data: orders, error } = await supabaseAdmin
       .from('orders')
-      .select('id,total,status,created_at')
+      .select('id,total,status,created_at,payment_proof_submitted_at')
       .neq('status', 'Cancelled');
     if (error) throw new HttpError(500, error.message);
 
-    const rows = (orders as { total: number; created_at: string }[]) ?? [];
+    const rows = (orders as Array<{
+      total: number;
+      created_at: string;
+      status: string;
+      payment_proof_submitted_at: string | null;
+    }>) ?? [];
+
     const revenue = rows.reduce((s, o) => s + Number(o.total), 0);
 
     const { count: adminCount } = await supabaseAdmin
@@ -242,25 +271,30 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       .select('id', { count: 'exact', head: true })
       .in('role', ['admin', 'superadmin']);
 
-    // Orders awaiting payment confirmation — Pending + proof submitted.
-    const { count: pendingConfirmations } = await supabaseAdmin
-      .from('orders')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'Pending payment')
-      .not('payment_proof_submitted_at', 'is', null);
+    // Only count pending orders that actually need admin action
+    // (fresh, or have proof submitted). Ignore abandoned carts.
+    const cutoffMs = Date.now() - STALE_PENDING_HOURS * 3600_000;
+    const pendingConfirmations = rows.filter(
+      (o) =>
+        o.status === 'Pending payment' &&
+        (o.payment_proof_submitted_at ||
+          new Date(o.created_at).getTime() > cutoffMs),
+    ).length;
 
+    // Recent orders: skip stale pending.
     const { data: recent } = await supabaseAdmin
       .from('orders')
       .select('*')
       .order('created_at', { ascending: false })
-      .limit(5);
+      .limit(20);
+    const recentFresh = ((recent as Order[]) ?? []).filter(isFresh).slice(0, 5);
 
     return reply.send({
       revenue,
       orderCount: rows.length,
       adminCount: adminCount ?? 0,
-      pendingConfirmations: pendingConfirmations ?? 0,
-      recentOrders: (recent as Order[]) ?? [],
+      pendingConfirmations,
+      recentOrders: recentFresh,
     });
   });
 
@@ -273,4 +307,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     if (error) throw new HttpError(500, error.message);
     return reply.send({ team: (data as Profile[]) ?? [] });
   });
+
+  // Silence unused import warning in isolated builds.
+  void staleCutoff;
 };
