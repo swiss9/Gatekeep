@@ -327,7 +327,6 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
         city: order.customer_city,
         total: order.total,
         payment_method: method,
-        created_at: order.created_at,
       }).catch((err: unknown) => {
         console.error('[orders] admin notify failed:', err);
       });
@@ -378,7 +377,6 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       city: updated.customer_city,
       total: updated.total,
       payment_method: `${updated.payment_method} · proof submitted`,
-      created_at: updated.created_at,
     }).catch((err: unknown) => {
       console.error('[orders] proof notify failed:', err);
     });
