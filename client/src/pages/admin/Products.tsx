@@ -34,8 +34,15 @@ type FormState = {
 };
 
 const emptyForm = (): FormState => ({
-  name: '', description: '', price: '', stock: '10', category_id: '',
-  pastel_color: 'blue', image_url: '', active: true, delivery_type: 'physical',
+  name: '',
+  description: '',
+  price: '',
+  stock: '10',
+  category_id: '',
+  pastel_color: 'blue',
+  image_url: '',
+  active: true,
+  delivery_type: 'physical',
   digital_file_path: '',
 });
 
@@ -60,9 +67,16 @@ export function Products() {
       })
       .catch((err: unknown) => toast(err instanceof Error ? err.message : 'Load failed'));
 
-  useEffect(() => { void load(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const openNew = () => { setEditingId(null); setForm(emptyForm()); setFormOpen(true); };
+  const openNew = () => {
+    setEditingId(null);
+    setForm(emptyForm());
+    setFormOpen(true);
+  };
 
   const openEdit = (p: Product) => {
     setEditingId(p.id);
@@ -87,8 +101,11 @@ export function Products() {
       const url = await uploadProductImage(file);
       setForm((f) => ({ ...f, image_url: url }));
       toast('Image uploaded');
-    } catch (err) { toast(err instanceof Error ? err.message : 'Upload failed'); }
-    finally { setUploading(false); }
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
   };
 
   const onDigitalFile = async (file: File) => {
@@ -97,8 +114,11 @@ export function Products() {
       const path = await uploadDigitalFile(file);
       setForm((f) => ({ ...f, digital_file_path: path }));
       toast('File uploaded');
-    } catch (err) { toast(err instanceof Error ? err.message : 'Upload failed'); }
-    finally { setUploadingFile(false); }
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploadingFile(false);
+    }
   };
 
   const save = async () => {
@@ -106,8 +126,12 @@ export function Products() {
     const stock = Number(form.stock);
     if (!form.name.trim()) return toast('Product needs a name');
     if (!Number.isFinite(price) || price < 0) return toast('Enter a valid price');
-    if (form.delivery_type === 'physical' && (!Number.isInteger(stock) || stock < 0)) return toast('Enter valid stock');
-    if (form.delivery_type === 'digital' && !form.digital_file_path) return toast('Upload a digital file first');
+    if (form.delivery_type === 'physical' && (!Number.isInteger(stock) || stock < 0)) {
+      return toast('Enter valid stock');
+    }
+    if (form.delivery_type === 'digital' && !form.digital_file_path) {
+      return toast('Upload a digital file first');
+    }
 
     const body: ProductWriteBody = {
       name: form.name.trim(),
@@ -124,24 +148,41 @@ export function Products() {
 
     setBusy(true);
     try {
-      if (editingId) { await api.updateProduct(editingId, body); toast('Product updated'); }
-      else { await api.createProduct({ ...body, name: form.name.trim(), price }); toast('Product published'); }
+      if (editingId) {
+        await api.updateProduct(editingId, body);
+        toast('Product updated');
+      } else {
+        await api.createProduct({ ...body, name: form.name.trim(), price });
+        toast('Product published');
+      }
       setFormOpen(false);
       await load();
-    } catch (err) { toast(err instanceof Error ? err.message : 'Save failed'); }
-    finally { setBusy(false); }
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const toggleActive = async (p: Product) => {
-    try { await api.updateProduct(p.id, { active: !p.active }); await load();
+    try {
+      await api.updateProduct(p.id, { active: !p.active });
+      await load();
       toast(p.active ? `“${p.name}” hidden` : `“${p.name}” visible`);
-    } catch (err) { toast(err instanceof Error ? err.message : 'Update failed'); }
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Update failed');
+    }
   };
 
   const removeProduct = async (p: Product) => {
     if (!window.confirm(`Deactivate “${p.name}”?`)) return;
-    try { await api.deleteProduct(p.id); await load(); toast('Deactivated'); }
-    catch (err) { toast(err instanceof Error ? err.message : 'Failed'); }
+    try {
+      await api.deleteProduct(p.id);
+      await load();
+      toast('Deactivated');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed');
+    }
   };
 
   if (!items) return <p className="muted" style={{ marginTop: 16 }}>Loading…</p>;
@@ -152,28 +193,42 @@ export function Products() {
         {items.map((p) => (
           <div className="inv-row" key={p.id} style={{ flexWrap: 'wrap' }}>
             <div className="inv-thumb" style={{ background: PASTEL_HEX[p.pastel_color] }}>
-              {p.image_url ? <img src={p.image_url} alt={p.name} /> : <span className="initial">{p.name.charAt(0).toUpperCase()}</span>}
+              {p.image_url ? (
+                <img src={p.image_url} alt={p.name} />
+              ) : (
+                <span className="initial">{p.name.charAt(0).toUpperCase()}</span>
+              )}
             </div>
             <div className="inv-info">
               <div className="inv-name">{p.name}</div>
               <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>
-                {formatMoney(p.price, currency)} · {p.delivery_type === 'physical' ? `${p.stock} in stock` : p.delivery_type === 'digital' ? 'Digital' : 'No delivery'}
+                {formatMoney(p.price, currency)} ·{' '}
+                {p.delivery_type === 'physical'
+                  ? `${p.stock} in stock`
+                  : p.delivery_type === 'digital'
+                    ? 'Digital'
+                    : 'No delivery'}
               </div>
             </div>
             <label className="switch">
               <input type="checkbox" checked={p.active} onChange={() => toggleActive(p)} />
-              <span className="track" /><span className="knob" />
+              <span className="track" />
+              <span className="knob" />
             </label>
           </div>
         ))}
         {items.length === 0 && (
-          <div className="inv-row"><div className="inv-info muted">No products yet.</div></div>
+          <div className="inv-row">
+            <div className="inv-info muted">No products yet.</div>
+          </div>
         )}
       </div>
 
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
         <button type="button" className="dashed-btn" style={{ marginTop: 0 }} onClick={openNew}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
           Add product
         </button>
       </div>
@@ -182,9 +237,15 @@ export function Products() {
         <div className="inv-list" style={{ marginTop: 12 }}>
           {items.map((p) => (
             <div className="inv-row" key={`${p.id}-actions`}>
-              <div className="inv-info"><div className="inv-name">{p.name}</div></div>
-              <button type="button" className="link-btn" onClick={() => openEdit(p)}>Edit</button>
-              <button type="button" className="link-btn" onClick={() => removeProduct(p)}>Delete</button>
+              <div className="inv-info">
+                <div className="inv-name">{p.name}</div>
+              </div>
+              <button type="button" className="link-btn" onClick={() => openEdit(p)}>
+                Edit
+              </button>
+              <button type="button" className="link-btn" onClick={() => removeProduct(p)}>
+                Delete
+              </button>
             </div>
           ))}
         </div>
@@ -197,18 +258,34 @@ export function Products() {
 
             <div className="field">
               <label>Name</label>
-              <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Oak Desk Tray" />
+              <input
+                type="text"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="e.g. Oak Desk Tray"
+              />
             </div>
 
             <div className="field">
               <label>Description</label>
-              <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Optional" />
+              <textarea
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="Optional"
+              />
             </div>
 
             <div className="field">
               <label>Delivery</label>
-              <select value={form.delivery_type} onChange={(e) => setForm({ ...form, delivery_type: e.target.value as DeliveryType })}>
-                {DELIVERY.map((d) => (<option key={d.id} value={d.id}>{d.label}</option>))}
+              <select
+                value={form.delivery_type}
+                onChange={(e) => setForm({ ...form, delivery_type: e.target.value as DeliveryType })}
+              >
+                {DELIVERY.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.label}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -216,13 +293,46 @@ export function Products() {
               <div className="field">
                 <label>Digital file</label>
                 {!form.digital_file_path ? (
-                  <input type="file" onChange={(e) => { const f = e.target.files?.[0]; if (f) void onDigitalFile(f); }} disabled={uploadingFile} />
+                  <input
+                    type="file"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void onDigitalFile(f);
+                    }}
+                    disabled={uploadingFile}
+                  />
                 ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', border: '1px solid var(--line)', borderRadius: 10, background: 'var(--chip)' }}>
-                    <span className="muted" style={{ fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: "'JetBrains Mono', monospace" }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      padding: '10px 12px',
+                      border: '1px solid var(--line)',
+                      borderRadius: 10,
+                      background: 'var(--chip)',
+                    }}
+                  >
+                    <span
+                      className="muted"
+                      style={{
+                        fontSize: 12,
+                        flex: 1,
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        fontFamily: "'JetBrains Mono', monospace",
+                      }}
+                    >
                       {form.digital_file_path.slice(0, 40)}…
                     </span>
-                    <button type="button" className="x-btn" aria-label="Remove file" onClick={() => setForm({ ...form, digital_file_path: '' })}>
+                    <button
+                      type="button"
+                      className="x-btn"
+                      aria-label="Remove file"
+                      onClick={() => setForm({ ...form, digital_file_path: '' })}
+                    >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                         <path d="M6 6l12 12M18 6 6 18" />
                       </svg>
@@ -235,21 +345,40 @@ export function Products() {
             <div className="field-row">
               <div className="field">
                 <label>Price</label>
-                <input type="number" min="0" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.price}
+                  onChange={(e) => setForm({ ...form, price: e.target.value })}
+                />
               </div>
               {form.delivery_type === 'physical' && (
                 <div className="field">
                   <label>Stock</label>
-                  <input type="number" min="0" step="1" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} />
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={form.stock}
+                    onChange={(e) => setForm({ ...form, stock: e.target.value })}
+                  />
                 </div>
               )}
             </div>
 
             <div className="field">
               <label>Category</label>
-              <select value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
+              <select
+                value={form.category_id}
+                onChange={(e) => setForm({ ...form, category_id: e.target.value })}
+              >
                 <option value="">No category</option>
-                {categories.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -257,8 +386,17 @@ export function Products() {
               <label>Backdrop</label>
               <div className="swatches">
                 {COLORS.map((c) => (
-                  <label key={c} className={`swatch${form.pastel_color === c ? ' sel' : ''}`} style={{ background: PASTEL_HEX[c] }}>
-                    <input type="radio" name="pastel" checked={form.pastel_color === c} onChange={() => setForm({ ...form, pastel_color: c })} />
+                  <label
+                    key={c}
+                    className={`swatch${form.pastel_color === c ? ' sel' : ''}`}
+                    style={{ background: PASTEL_HEX[c] }}
+                  >
+                    <input
+                      type="radio"
+                      name="pastel"
+                      checked={form.pastel_color === c}
+                      onChange={() => setForm({ ...form, pastel_color: c })}
+                    />
                   </label>
                 ))}
               </div>
@@ -267,22 +405,39 @@ export function Products() {
             <div className="field">
               <label>Cover image</label>
               {!form.image_url ? (
-                <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(e) => { const f = e.target.files?.[0]; if (f) void onImageFile(f); }} disabled={uploading} />
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) void onImageFile(f);
+                  }}
+                  disabled={uploading}
+                />
               ) : (
-                <div style={{ position: 'relative' }}>
-                  <img src={form.image_url} alt="" style={{ borderRadius: 8, maxHeight: 140, width: '100%', objectFit: 'cover' }} />
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <img
+                    src={form.image_url}
+                    alt=""
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.opacity = '0.3';
+                    }}
+                    style={{
+                      flex: 1,
+                      borderRadius: 8,
+                      maxHeight: 160,
+                      width: '100%',
+                      objectFit: 'cover',
+                      minHeight: 100,
+                      background: 'var(--chip)',
+                    }}
+                  />
                   <button
                     type="button"
                     className="x-btn"
                     aria-label="Remove image"
                     onClick={() => setForm({ ...form, image_url: '' })}
-                    style={{
-                      position: 'absolute',
-                      top: 8,
-                      right: 8,
-                      background: 'rgba(255,255,255,.9)',
-                      border: '1px solid var(--line)',
-                    }}
+                    style={{ border: '1px solid var(--line)', background: 'var(--surface)' }}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                       <path d="M6 6l12 12M18 6 6 18" />
@@ -295,14 +450,26 @@ export function Products() {
             <div className="field" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <label style={{ marginBottom: 0 }}>Visible in shop</label>
               <label className="switch">
-                <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} />
-                <span className="track" /><span className="knob" />
+                <input
+                  type="checkbox"
+                  checked={form.active}
+                  onChange={(e) => setForm({ ...form, active: e.target.checked })}
+                />
+                <span className="track" />
+                <span className="knob" />
               </label>
             </div>
 
             <div className="modal-actions">
-              <button type="button" onClick={() => setFormOpen(false)} disabled={busy}>Cancel</button>
-              <button type="button" className="primary" onClick={save} disabled={busy || uploading || uploadingFile}>
+              <button type="button" onClick={() => setFormOpen(false)} disabled={busy}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="primary"
+                onClick={save}
+                disabled={busy || uploading || uploadingFile}
+              >
                 {busy ? 'Saving…' : editingId ? 'Save' : 'Publish'}
               </button>
             </div>
@@ -311,4 +478,4 @@ export function Products() {
       )}
     </>
   );
-}
+      }
