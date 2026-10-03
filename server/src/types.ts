@@ -11,12 +11,7 @@ export type Profile = {
 };
 
 export type PaymentProvider =
-  | 'manual'
-  | 'cod'
-  | 'bank'
-  | 'crypto'
-  | 'stars'
-  | 'stripe';
+  | 'manual' | 'cod' | 'bank' | 'crypto' | 'stars' | 'stripe';
 
 export type StoreSettings = {
   id: 1;
@@ -75,18 +70,14 @@ export type Product = {
   rating: number;
   review_count: number;
   delivery_type: DeliveryType;
-  digital_file_path: string | null;
+  digital_file_paths: string[];
   created_at: string;
   updated_at: string;
 };
 
 export type OrderStatus =
-  | 'Pending payment'
-  | 'Paid'
-  | 'Processing'
-  | 'In transit'
-  | 'Delivered'
-  | 'Cancelled';
+  | 'Pending payment' | 'Paid' | 'Processing'
+  | 'In transit' | 'Delivered' | 'Cancelled';
 
 export type Order = {
   id: string;
