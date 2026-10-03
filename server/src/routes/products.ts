@@ -60,14 +60,12 @@ export const productRoutes: FastifyPluginAsync = async (app) => {
           stock: body.stock,
           active: body.active,
           delivery_type: body.delivery_type,
-          digital_file_path: body.digital_file_path ?? null,
+          digital_file_paths: body.digital_file_paths,
         })
         .select()
         .single();
       if (error || !data) throw new HttpError(500, error?.message ?? 'insert failed');
 
-      // Fire-and-forget broadcast. Errors are swallowed so a bot outage
-      // never fails product creation.
       broadcastNewProduct({ name: data.name, price: Number(data.price) }).catch(
         (err: unknown) => {
           console.error('[products] broadcast failed:', err);
