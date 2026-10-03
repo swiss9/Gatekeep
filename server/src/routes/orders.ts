@@ -9,9 +9,10 @@ import type { Order, OrderItem, Product, StoreSettings } from '../types.js';
 const RATE_LIMIT_PER_HOUR = 5;
 const ORDER_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
-// Methods where the admin has real work to do on a fresh order. Stars and
-// Stripe confirm themselves — no admin action means no notification noise.
-const ADMIN_ACTION_METHODS = new Set(['bank', 'crypto', 'cod', 'manual']);
+// Methods where the admin has real work on a fresh order. Stars and
+// Stripe confirm themselves. Manual orders are direct-chat — the buyer
+// messages the admin out-of-band, so no notification needed on creation.
+const ADMIN_ACTION_METHODS = new Set(['bank', 'crypto', 'cod']);
 
 function genOrderCode(): string {
   let s = '';
@@ -26,7 +27,10 @@ type PaymentPayload =
   | { kind: 'stars'; invoice_url: string }
   | { kind: 'stripe'; url: string }
   | { kind: 'bank'; details: string }
-  | { kind: 'crypto'; addresses: { btc: string; eth: string; usdt_trc20: string; ton: string } }
+  | {
+      kind: 'crypto';
+      addresses: { btc: string; eth: string; usdt_trc20: string; ton: string };
+    }
   | { kind: 'cod' };
 
 function buildPaymentPayload(
@@ -299,8 +303,7 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
     }
 
     // Only ping admins for methods where they actually have work to do.
-    // Stars and Stripe confirm themselves — the admin will be notified
-    // when payment lands (in the webhook / bot path).
+    // Stars and Stripe confirm themselves. Manual is direct-chat.
     if (ADMIN_ACTION_METHODS.has(method)) {
       notifyAdminsOfOrder({
         code: order.order_code,
