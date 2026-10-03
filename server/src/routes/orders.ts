@@ -9,6 +9,10 @@ import type { Order, OrderItem, Product, StoreSettings } from '../types.js';
 const RATE_LIMIT_PER_HOUR = 5;
 const ORDER_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
+// Methods where the admin has real work to do on a fresh order. Stars and
+// Stripe confirm themselves — no admin action means no notification noise.
+const ADMIN_ACTION_METHODS = new Set(['bank', 'crypto', 'cod', 'manual']);
+
 function genOrderCode(): string {
   let s = '';
   for (let i = 0; i < 6; i++) {
@@ -71,11 +75,6 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
     });
   });
 
-  /**
-   * Returns freshly-signed download URLs for digital items in an order
-   * the caller owns. Only issued once the order is Paid or beyond —
-   * unpaid orders cannot extract files.
-   */
   app.get('/api/orders/:id/downloads', { preHandler: requireAuth }, async (req, reply) => {
     const me = currentProfile(req);
     const { id } = req.params as { id: string };
@@ -299,15 +298,20 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    notifyAdminsOfOrder({
-      code: order.order_code,
-      customer: order.customer_name,
-      city: order.customer_city,
-      total: order.total,
-      payment_method: method,
-    }).catch((err: unknown) => {
-      console.error('[orders] admin notify failed:', err);
-    });
+    // Only ping admins for methods where they actually have work to do.
+    // Stars and Stripe confirm themselves — the admin will be notified
+    // when payment lands (in the webhook / bot path).
+    if (ADMIN_ACTION_METHODS.has(method)) {
+      notifyAdminsOfOrder({
+        code: order.order_code,
+        customer: order.customer_name,
+        city: order.customer_city,
+        total: order.total,
+        payment_method: method,
+      }).catch((err: unknown) => {
+        console.error('[orders] admin notify failed:', err);
+      });
+    }
 
     const payment = buildPaymentPayload(settings, method, starsInvoiceUrl, stripeCheckoutUrl);
 
