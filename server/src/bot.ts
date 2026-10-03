@@ -92,17 +92,24 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
 
     if (!orderId) {
       await callTelegram('answerPreCheckoutQuery', {
-        pre_checkout_query_id: q.id, ok: false, error_message: 'Invalid order reference.',
+        pre_checkout_query_id: q.id,
+        ok: false,
+        error_message: 'Invalid order reference.',
       });
       return;
     }
 
     const { data: order } = await supabaseAdmin
-      .from('orders').select('id, status').eq('id', orderId).maybeSingle();
+      .from('orders')
+      .select('id, status')
+      .eq('id', orderId)
+      .maybeSingle();
 
     if (!order || order.status !== 'Pending payment') {
       await callTelegram('answerPreCheckoutQuery', {
-        pre_checkout_query_id: q.id, ok: false, error_message: 'This order is no longer payable.',
+        pre_checkout_query_id: q.id,
+        ok: false,
+        error_message: 'This order is no longer payable.',
       });
       return;
     }
@@ -112,15 +119,9 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
 }
 
 /**
- * Post-Paid-transition work. Fetches the order's line items, signs every
- * digital file path, and sends one Telegram message per digital product
- * with a download button per file.
- *
- * Also returns whether the order contains only non-shippable items —
- * callers use this to auto-flip the order to Delivered.
- *
- * Idempotent: safe to call twice; the buyer just gets a fresh set of
- * signed links.
+ * Post-Paid-transition work. Signs every digital file path and sends one
+ * message per digital product, then reports whether the order has
+ * anything that needs shipping.
  */
 export async function finalizeDigitalDelivery(order: {
   id: string;
@@ -133,9 +134,7 @@ export async function finalizeDigitalDelivery(order: {
     .eq('order_id', order.id);
   const rows = (items as OrderItem[]) ?? [];
 
-  if (rows.length === 0) {
-    return { noShipping: false, delivered: false };
-  }
+  if (rows.length === 0) return { noShipping: false, delivered: false };
 
   const productIds = rows.map((r) => r.product_id).filter((x): x is string => !!x);
   const { data: products } = productIds.length
@@ -143,18 +142,23 @@ export async function finalizeDigitalDelivery(order: {
     : { data: [] as Product[] };
   const byId = new Map(((products as Product[]) ?? []).map((p) => [p.id, p]));
 
-  // "No shipping" means: every line item is either digital or a service
-  // ('none'). Anything physical (or unknown, e.g. deleted product)
-  // forces manual fulfilment.
   let noShipping = true;
   for (const line of rows) {
-    if (!line.product_id) { noShipping = false; break; }
+    if (!line.product_id) {
+      noShipping = false;
+      break;
+    }
     const p = byId.get(line.product_id);
-    if (!p) { noShipping = false; break; }
-    if (p.delivery_type === 'physical') { noShipping = false; break; }
+    if (!p) {
+      noShipping = false;
+      break;
+    }
+    if (p.delivery_type === 'physical') {
+      noShipping = false;
+      break;
+    }
   }
 
-  // Send files to the buyer.
   let delivered = false;
   if (order.user_id) {
     const { data: profile } = await supabaseAdmin
@@ -227,12 +231,12 @@ async function markOrderPaidFromStars(invoicePayload: string, chargeId: string):
     return;
   }
 
-  // Notify buyer first, then deliver files. Both fire in quick succession
-  // — the buyer sees "Payment confirmed" followed by "Your download is
-  // ready" a moment later.
   if (updated.user_id) {
     const { data: profile } = await supabaseAdmin
-      .from('profiles').select('telegram_id').eq('id', updated.user_id).maybeSingle();
+      .from('profiles')
+      .select('telegram_id')
+      .eq('id', updated.user_id)
+      .maybeSingle();
     if (profile?.telegram_id) {
       await notifyBuyerPaymentConfirmed({
         telegramId: Number(profile.telegram_id),
@@ -243,9 +247,6 @@ async function markOrderPaidFromStars(invoicePayload: string, chargeId: string):
 
   const { noShipping } = await finalizeDigitalDelivery(updated);
 
-  // If there's nothing to physically ship, the order is done the moment
-  // it's paid. Flip to Delivered so admin doesn't have a leftover Paid
-  // order sitting in their queue.
   if (noShipping) {
     await supabaseAdmin
       .from('orders')
@@ -293,7 +294,9 @@ export function startBot(): void {
   void pollLoop();
 }
 
-export function stopBot(): void { running = false; }
+export function stopBot(): void {
+  running = false;
+}
 
 export async function createStarsInvoiceLink(params: {
   title: string;
@@ -320,20 +323,35 @@ export async function createStarsInvoiceLink(params: {
   return json.result;
 }
 
+/**
+ * New-order notification for admins. Includes payment method and a
+ * timestamp so the admin knows exactly when and how the order was
+ * placed, right in the Telegram message — no need to open the app.
+ */
 export async function notifyAdminsOfOrder(order: {
   code: string;
   customer: string;
   city: string;
   total: number;
   payment_method: string;
+  created_at?: string;
 }): Promise<void> {
   const { data: admins } = await supabaseAdmin
-    .from('profiles').select('telegram_id').in('role', ['admin', 'superadmin']);
+    .from('profiles')
+    .select('telegram_id')
+    .in('role', ['admin', 'superadmin']);
   if (!admins || admins.length === 0) return;
 
   const { currency_symbol } = await loadSettings();
-  const methodLabel = order.payment_method.replace(/_/g, ' ');
-  const text = `<b>New order</b>\n\n#${order.code}\n${order.customer} · ${order.city}\n${currency_symbol}${order.total} · ${methodLabel}`;
+  const methodLabel = prettifyMethod(order.payment_method);
+  const when = formatWhen(order.created_at ?? new Date().toISOString());
+
+  const text =
+    `<b>New order</b>\n\n` +
+    `#${order.code}\n` +
+    `${order.customer} · ${order.city}\n` +
+    `${currency_symbol}${order.total} · ${methodLabel}\n` +
+    `<i>${when}</i>`;
 
   for (const a of admins) {
     try {
@@ -341,6 +359,37 @@ export async function notifyAdminsOfOrder(order: {
     } catch (err) {
       console.error('[bot] admin notify failed:', err);
     }
+  }
+}
+
+function prettifyMethod(method: string): string {
+  // "proof submitted" suffix is used on the proof-notification variant.
+  if (method.endsWith(' · proof submitted')) {
+    const base = method.slice(0, -' · proof submitted'.length);
+    return `${prettifyMethod(base)} · proof submitted`;
+  }
+  switch (method) {
+    case 'stars': return 'Telegram Stars';
+    case 'stripe': return 'Card (Stripe)';
+    case 'bank': return 'Bank transfer';
+    case 'crypto': return 'Crypto';
+    case 'cod': return 'Cash on Delivery';
+    case 'manual': return 'Arrange with seller';
+    default: return method.replace(/_/g, ' ');
+  }
+}
+
+function formatWhen(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZone: 'UTC',
+    }) + ' UTC';
+  } catch {
+    return iso;
   }
 }
 
@@ -375,11 +424,6 @@ export async function notifyBuyerPaymentConfirmed(params: {
   }
 }
 
-/**
- * Sends one Telegram message per digital product, with a download button
- * per file plus an "Open in App" button. Each URL is a fresh 24h signed
- * link. After that window the buyer reopens the app to get new ones.
- */
 export async function deliverDigitalProduct(params: {
   telegramId: number;
   orderCode: string;
@@ -395,9 +439,7 @@ export async function deliverDigitalProduct(params: {
 
   const count = params.files.length;
   const tail =
-    count === 1
-      ? 'Link expires in 24 hours.'
-      : `${count} files. Links expire in 24 hours.`;
+    count === 1 ? 'Link expires in 24 hours.' : `${count} files. Links expire in 24 hours.`;
   const text = `<b>Your download is ready</b>\n\n${params.productName}\nOrder #${params.orderCode}\n\n${tail} You can always get fresh links from the app.`;
 
   try {
@@ -416,7 +458,9 @@ export async function broadcastNewProduct(product: {
   price: number;
 }): Promise<void> {
   const { data: orders } = await supabaseAdmin
-    .from('orders').select('user_id').not('user_id', 'is', null);
+    .from('orders')
+    .select('user_id')
+    .not('user_id', 'is', null);
 
   const uniqueIds = [
     ...new Set(
@@ -431,7 +475,9 @@ export async function broadcastNewProduct(product: {
   }
 
   const { data: profiles } = await supabaseAdmin
-    .from('profiles').select('telegram_id').in('id', uniqueIds);
+    .from('profiles')
+    .select('telegram_id')
+    .in('id', uniqueIds);
   if (!profiles || profiles.length === 0) return;
 
   const { store_name, currency_symbol } = await loadSettings();
@@ -450,5 +496,5 @@ export async function broadcastNewProduct(product: {
   console.log(`[bot] broadcast sent to ${sent}/${profiles.length} buyers`);
 }
 
-// Keep the Order type referenced so the import survives tree shaking.
+// Type-only import reference (prevents unused import warning).
 void (undefined as unknown as Order);
