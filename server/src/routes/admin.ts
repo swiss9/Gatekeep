@@ -3,11 +3,11 @@ import { supabaseAdmin } from '../supabase.js';
 import { HttpError, requireRole, currentProfile } from '../middleware/auth.js';
 import { SettingsUpdateSchema, OrderStatusUpdateSchema } from '../schemas.js';
 import {
-  deliverDigitalProduct,
+  finalizeDigitalDelivery,
   notifyBuyerOfDelivery,
   notifyBuyerPaymentConfirmed,
 } from '../bot.js';
-import type { Order, OrderItem, Product, Profile, StoreSettings } from '../types.js';
+import type { Order, OrderItem, Profile, StoreSettings } from '../types.js';
 
 const STALE_PENDING_HOURS = 2;
 
@@ -15,6 +15,36 @@ function isFresh(o: Order): boolean {
   if (o.status !== 'Pending payment') return true;
   if (o.payment_proof_submitted_at) return true;
   return new Date(o.created_at).getTime() > Date.now() - STALE_PENDING_HOURS * 3600_000;
+}
+
+/**
+ * Shared post-Paid work: notify buyer, deliver digital files, and if the
+ * order has nothing to physically ship, flip status to Delivered.
+ */
+async function completePaidOrder(order: {
+  id: string;
+  order_code: string;
+  user_id: string | null;
+}): Promise<void> {
+  if (order.user_id) {
+    const { data: profile } = await supabaseAdmin
+      .from('profiles').select('telegram_id').eq('id', order.user_id).maybeSingle();
+    if (profile?.telegram_id) {
+      await notifyBuyerPaymentConfirmed({
+        telegramId: Number(profile.telegram_id),
+        orderCode: order.order_code,
+      });
+    }
+  }
+
+  const { noShipping } = await finalizeDigitalDelivery(order);
+
+  if (noShipping) {
+    await supabaseAdmin
+      .from('orders')
+      .update({ status: 'Delivered', delivered_at: new Date().toISOString() })
+      .eq('id', order.id);
+  }
 }
 
 export const adminRoutes: FastifyPluginAsync = async (app) => {
@@ -68,15 +98,8 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     const me = currentProfile(req);
     const { id } = req.params as { id: string };
 
-    const { data: existing } = await supabaseAdmin
-      .from('orders').select('*').eq('id', id).maybeSingle();
-    if (!existing) throw new HttpError(404, 'Order not found');
-    if (existing.status !== 'Pending payment') {
-      throw new HttpError(409, 'Order is not awaiting payment.');
-    }
-
     const now = new Date().toISOString();
-    const { data: updated, error } = await supabaseAdmin
+    const { data: updated } = await supabaseAdmin
       .from('orders')
       .update({
         status: 'Paid',
@@ -84,36 +107,26 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
         paid_confirmed_at: now,
         paid_confirmed_by: me.id,
       })
-      .eq('id', id).select().single();
-    if (error || !updated) throw new HttpError(500, error?.message ?? 'confirm failed');
+      .eq('id', id)
+      .eq('status', 'Pending payment')
+      .select('id, order_code, user_id')
+      .maybeSingle();
+    if (!updated) throw new HttpError(409, 'Order is not awaiting payment.');
 
-    if (updated.user_id) {
-      const { data: profile } = await supabaseAdmin
-        .from('profiles').select('telegram_id').eq('id', updated.user_id).maybeSingle();
-      if (profile?.telegram_id) {
-        await notifyBuyerPaymentConfirmed({
-          telegramId: Number(profile.telegram_id),
-          orderCode: updated.order_code,
-        });
-      }
-    }
+    await completePaidOrder(updated);
 
-    return reply.send({ order: updated as Order });
+    // Return the possibly-Delivered order.
+    const { data: fresh } = await supabaseAdmin
+      .from('orders').select('*').eq('id', id).single();
+    return reply.send({ order: fresh as Order });
   });
 
   app.post('/api/admin/orders/:id/simulate-paid', admin, async (req, reply) => {
     const me = currentProfile(req);
     const { id } = req.params as { id: string };
 
-    const { data: existing } = await supabaseAdmin
-      .from('orders').select('*').eq('id', id).maybeSingle();
-    if (!existing) throw new HttpError(404, 'Order not found');
-    if (existing.status !== 'Pending payment') {
-      throw new HttpError(409, 'Order is not awaiting payment.');
-    }
-
     const now = new Date().toISOString();
-    const { data: updated, error } = await supabaseAdmin
+    const { data: updated } = await supabaseAdmin
       .from('orders')
       .update({
         status: 'Paid',
@@ -122,22 +135,18 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
         paid_confirmed_by: me.id,
         payment_simulated: true,
       })
-      .eq('id', id).select().single();
-    if (error || !updated) throw new HttpError(500, error?.message ?? 'simulate failed');
-
-    if (updated.user_id) {
-      const { data: profile } = await supabaseAdmin
-        .from('profiles').select('telegram_id').eq('id', updated.user_id).maybeSingle();
-      if (profile?.telegram_id) {
-        await notifyBuyerPaymentConfirmed({
-          telegramId: Number(profile.telegram_id),
-          orderCode: updated.order_code,
-        });
-      }
-    }
+      .eq('id', id)
+      .eq('status', 'Pending payment')
+      .select('id, order_code, user_id')
+      .maybeSingle();
+    if (!updated) throw new HttpError(409, 'Order is not awaiting payment.');
 
     console.log(`[admin] order ${updated.order_code} marked paid as SIMULATION by ${me.id}`);
-    return reply.send({ order: updated as Order });
+    await completePaidOrder(updated);
+
+    const { data: fresh } = await supabaseAdmin
+      .from('orders').select('*').eq('id', id).single();
+    return reply.send({ order: fresh as Order });
   });
 
   app.patch('/api/admin/orders/:id', admin, async (req, reply) => {
@@ -148,81 +157,49 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       .from('orders').select('*').eq('id', id).maybeSingle();
     if (!existing) throw new HttpError(404, 'Order not found');
 
+    const now = new Date().toISOString();
     const updates: Record<string, string | null> = { status: body.status };
     if (body.status === 'Paid' && !existing.payment_confirmed_at) {
-      updates.payment_confirmed_at = new Date().toISOString();
-      updates.paid_confirmed_at = new Date().toISOString();
+      updates.payment_confirmed_at = now;
+      updates.paid_confirmed_at = now;
     }
     if (body.status === 'Delivered' && !existing.delivered_at) {
-      updates.delivered_at = new Date().toISOString();
+      updates.delivered_at = now;
     }
 
-    const { data: updated, error } = await supabaseAdmin
-      .from('orders').update(updates).eq('id', id).select().single();
-    if (error || !updated) throw new HttpError(404, 'Order not found');
+    const { data: updated } = await supabaseAdmin
+      .from('orders').update(updates).eq('id', id)
+      .select('id, order_code, user_id, status').single();
+    if (!updated) throw new HttpError(404, 'Order not found');
 
-    if (body.status === 'Delivered' && existing.status !== 'Delivered') {
-      const order = updated as Order;
-      const { data: items } = await supabaseAdmin
-        .from('order_items').select('*').eq('order_id', order.id);
-      const rows = (items as OrderItem[]) ?? [];
+    const transitioningToPaid =
+      body.status === 'Paid' && existing.status !== 'Paid' &&
+      existing.status !== 'Processing' && existing.status !== 'In transit' &&
+      existing.status !== 'Delivered';
 
-      let buyerTelegramId: number | null = null;
-      if (order.user_id) {
+    const transitioningToDelivered =
+      body.status === 'Delivered' && existing.status !== 'Delivered';
+
+    if (transitioningToPaid) {
+      await completePaidOrder(updated);
+    } else if (transitioningToDelivered) {
+      // Digital files were already delivered at Paid time. Just send
+      // the shipment ping.
+      if (updated.user_id) {
         const { data: profile } = await supabaseAdmin
-          .from('profiles').select('telegram_id').eq('id', order.user_id).maybeSingle();
-        if (profile?.telegram_id) buyerTelegramId = Number(profile.telegram_id);
-      }
-
-      if (buyerTelegramId) {
-        const productIds = rows.map((r) => r.product_id).filter((x): x is string => !!x);
-        if (productIds.length > 0) {
-          const { data: products } = await supabaseAdmin
-            .from('products').select('*').in('id', productIds);
-          const byId = new Map(((products as Product[]) ?? []).map((p) => [p.id, p]));
-
-          for (const line of rows) {
-            if (!line.product_id) continue;
-            const p = byId.get(line.product_id);
-            if (!p || p.delivery_type !== 'digital') continue;
-            const paths = p.digital_file_paths ?? [];
-            if (paths.length === 0) continue;
-
-            // Sign each file path, label each with an index when there
-            // are multiple files for a single product.
-            const files: Array<{ label: string; url: string }> = [];
-            for (let i = 0; i < paths.length; i++) {
-              const path = paths[i];
-              if (!path) continue;
-              const { data, error } = await supabaseAdmin.storage
-                .from('digital-goods').createSignedUrl(path, 60 * 60 * 24);
-              if (error || !data?.signedUrl) continue;
-              const label =
-                paths.length === 1
-                  ? 'Download'
-                  : `Download ${i + 1} / ${paths.length}`;
-              files.push({ label, url: data.signedUrl });
-            }
-
-            if (files.length > 0) {
-              await deliverDigitalProduct({
-                telegramId: buyerTelegramId,
-                orderCode: order.order_code,
-                productName: p.name,
-                files,
-              });
-            }
-          }
+          .from('profiles').select('telegram_id').eq('id', updated.user_id).maybeSingle();
+        if (profile?.telegram_id) {
+          await notifyBuyerOfDelivery({
+            telegramId: Number(profile.telegram_id),
+            orderCode: updated.order_code,
+          });
         }
-
-        await notifyBuyerOfDelivery({
-          telegramId: buyerTelegramId,
-          orderCode: order.order_code,
-        });
       }
     }
 
-    return reply.send({ order: updated as Order });
+    const { data: fresh } = await supabaseAdmin
+      .from('orders').select('*').eq('id', id).single();
+    return reply.send({ order: fresh as Order });
   });
 
   app.get('/api/admin/overview', admin, async (_req, reply) => {
