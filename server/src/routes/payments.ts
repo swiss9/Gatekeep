@@ -3,7 +3,7 @@ import type Stripe from 'stripe';
 import { env } from '../env.js';
 import { supabaseAdmin } from '../supabase.js';
 import { stripeClient, stripeWebhookConfigured } from '../stripe.js';
-import { notifyBuyerPaymentConfirmed } from '../bot.js';
+import { finalizeDigitalDelivery, notifyBuyerPaymentConfirmed } from '../bot.js';
 
 export const paymentRoutes: FastifyPluginAsync = async (app) => {
   app.post('/api/payments/stripe/webhook', async (req: FastifyRequest, reply) => {
@@ -21,14 +21,10 @@ export const paymentRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'Missing raw body' });
     }
 
-    // Stripe's own verifier. Handles multi-signature during key rotation,
-    // timestamps, and returns a typed Event.
     let event: Stripe.Event;
     try {
       event = stripeClient().webhooks.constructEvent(
-        raw,
-        sigHeader,
-        env.STRIPE_WEBHOOK_SECRET as string,
+        raw, sigHeader, env.STRIPE_WEBHOOK_SECRET as string,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'signature check failed';
@@ -53,12 +49,9 @@ export const paymentRoutes: FastifyPluginAsync = async (app) => {
           break;
         }
         default:
-          // Ignore everything else.
           break;
       }
     } catch (err) {
-      // Log the failure but return 200 so Stripe does not retry
-      // indefinitely — a code bug would otherwise storm our endpoint.
       console.error(`[stripe] handler for ${event.type} failed:`, err);
     }
 
@@ -66,11 +59,6 @@ export const paymentRoutes: FastifyPluginAsync = async (app) => {
   });
 };
 
-/**
- * Marks an order paid. Compare-and-set on status ensures this is safe
- * against a concurrent admin "Confirm paid" click — both paths require
- * the order to still be 'Pending payment' at write time.
- */
 async function markPaidByOrderCode(orderCode: string): Promise<void> {
   const now = new Date().toISOString();
   const { data: updated } = await supabaseAdmin
@@ -86,18 +74,13 @@ async function markPaidByOrderCode(orderCode: string): Promise<void> {
     .maybeSingle();
 
   if (!updated) {
-    // Either the order doesn't exist, was already marked paid, or was
-    // cancelled. Stripe retries are safe.
     console.log(`[stripe] webhook for order_code=${orderCode} — nothing to do`);
     return;
   }
 
   if (updated.user_id) {
     const { data: profile } = await supabaseAdmin
-      .from('profiles')
-      .select('telegram_id')
-      .eq('id', updated.user_id)
-      .maybeSingle();
+      .from('profiles').select('telegram_id').eq('id', updated.user_id).maybeSingle();
     if (profile?.telegram_id) {
       await notifyBuyerPaymentConfirmed({
         telegramId: Number(profile.telegram_id),
@@ -106,14 +89,18 @@ async function markPaidByOrderCode(orderCode: string): Promise<void> {
     }
   }
 
+  const { noShipping } = await finalizeDigitalDelivery(updated);
+
+  if (noShipping) {
+    await supabaseAdmin
+      .from('orders')
+      .update({ status: 'Delivered', delivered_at: new Date().toISOString() })
+      .eq('id', updated.id);
+  }
+
   console.log(`[stripe] order ${updated.order_code} marked paid`);
 }
 
-/**
- * Fires when a Checkout Session expires (24h after creation). Cancels
- * the order if it is still pending, and restores any stock that was
- * decremented when the order was placed.
- */
 async function cancelUnpaidOrder(orderCode: string): Promise<void> {
   const { data: cancelled } = await supabaseAdmin
     .from('orders')
@@ -125,7 +112,6 @@ async function cancelUnpaidOrder(orderCode: string): Promise<void> {
 
   if (!cancelled) return;
 
-  // Restore stock for physical lines.
   const { data: items } = await supabaseAdmin
     .from('order_items')
     .select('product_id, quantity')
@@ -134,10 +120,7 @@ async function cancelUnpaidOrder(orderCode: string): Promise<void> {
   for (const line of (items ?? []) as Array<{ product_id: string | null; quantity: number }>) {
     if (!line.product_id) continue;
     const { data: p } = await supabaseAdmin
-      .from('products')
-      .select('delivery_type, stock')
-      .eq('id', line.product_id)
-      .maybeSingle();
+      .from('products').select('delivery_type, stock').eq('id', line.product_id).maybeSingle();
     if (!p || p.delivery_type !== 'physical') continue;
     await supabaseAdmin
       .from('products')
