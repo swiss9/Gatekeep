@@ -11,13 +11,12 @@ export function Settings() {
   const [saving, setSaving] = useState<string | null>(null);
 
   useEffect(() => {
-    api.store()
+    api
+      .store()
       .then((s) => {
         const { id: _id, updated_at: _u, ...rest } = s.store;
-        void _id; void _u;
-        // PostgREST returns numeric columns as strings. Coerce on load so
-        // the internal Draft matches its TypeScript type and any later
-        // arithmetic / equality check behaves.
+        void _id;
+        void _u;
         setDraft({
           ...rest,
           shipping_threshold: Number(rest.shipping_threshold),
@@ -34,10 +33,13 @@ export function Settings() {
     setSaving(card);
     try {
       const patch: Partial<Draft> = {};
-      keys.forEach((k) => { (patch as Record<string, unknown>)[k] = draft[k]; });
+      keys.forEach((k) => {
+        (patch as Record<string, unknown>)[k] = draft[k];
+      });
       const { store } = await api.updateSettings(patch);
       const { id: _id, updated_at: _u, ...rest } = store;
-      void _id; void _u;
+      void _id;
+      void _u;
       setDraft({
         ...rest,
         shipping_threshold: Number(rest.shipping_threshold),
@@ -45,8 +47,11 @@ export function Settings() {
         stars_rate: Number(rest.stars_rate),
       });
       toast(okMsg);
-    } catch (err) { toast(err instanceof Error ? err.message : 'Save failed'); }
-    finally { setSaving(null); }
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setSaving(null);
+    }
   };
 
   const update = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft({ ...draft, [k]: v });
@@ -59,20 +64,40 @@ export function Settings() {
       <div className="panel">
         <div className="field">
           <label>Store name</label>
-          <input type="text" value={draft.store_name} onChange={(e) => update('store_name', e.target.value)} />
+          <input
+            type="text"
+            value={draft.store_name}
+            onChange={(e) => update('store_name', e.target.value)}
+          />
         </div>
         <div className="field">
           <label>Tagline</label>
-          <input type="text" value={draft.store_tagline} onChange={(e) => update('store_tagline', e.target.value)} />
+          <input
+            type="text"
+            value={draft.store_tagline}
+            onChange={(e) => update('store_tagline', e.target.value)}
+          />
         </div>
         <div className="field-row">
           <div className="field">
             <label>Currency symbol</label>
-            <input type="text" maxLength={4} value={draft.currency_symbol} onChange={(e) => update('currency_symbol', e.target.value)} placeholder="$" />
+            <input
+              type="text"
+              maxLength={4}
+              value={draft.currency_symbol}
+              onChange={(e) => update('currency_symbol', e.target.value)}
+              placeholder="$"
+            />
           </div>
           <div className="field">
             <label>Currency code</label>
-            <input type="text" maxLength={3} value={draft.currency_code} onChange={(e) => update('currency_code', e.target.value.toLowerCase())} placeholder="usd" />
+            <input
+              type="text"
+              maxLength={3}
+              value={draft.currency_code}
+              onChange={(e) => update('currency_code', e.target.value.toLowerCase())}
+              placeholder="usd"
+            />
           </div>
         </div>
         <p className="muted" style={{ fontSize: 11.5, marginTop: -4, marginBottom: 8 }}>
@@ -81,21 +106,36 @@ export function Settings() {
         <div className="field-row">
           <div className="field">
             <label>Free shipping above</label>
-            <input type="number" min="0" step="1" value={draft.shipping_threshold} onChange={(e) => update('shipping_threshold', Number(e.target.value))} />
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={draft.shipping_threshold}
+              onChange={(e) => update('shipping_threshold', Number(e.target.value))}
+            />
           </div>
           <div className="field">
             <label>Shipping cost</label>
-            <input type="number" min="0" step="0.5" value={draft.shipping_cost} onChange={(e) => update('shipping_cost', Number(e.target.value))} />
+            <input
+              type="number"
+              min="0"
+              step="0.5"
+              value={draft.shipping_cost}
+              onChange={(e) => update('shipping_cost', Number(e.target.value))}
+            />
           </div>
         </div>
         <button
           type="button"
           className="btn-primary"
           disabled={saving === 'store'}
-          onClick={() => save(
-            ['store_name','store_tagline','currency_symbol','currency_code','shipping_threshold','shipping_cost'],
-            'store', 'Store saved',
-          )}
+          onClick={() =>
+            save(
+              ['store_name', 'store_tagline', 'currency_symbol', 'currency_code', 'shipping_threshold', 'shipping_cost'],
+              'store',
+              'Store saved',
+            )
+          }
         >
           {saving === 'store' ? 'Saving…' : 'Save store'}
         </button>
@@ -112,18 +152,28 @@ export function Settings() {
             </p>
           </div>
           <label className="switch">
-            <input type="checkbox" checked={draft.stars_enabled} onChange={(e) => update('stars_enabled', e.target.checked)} />
-            <span className="track" /><span className="knob" />
+            <input
+              type="checkbox"
+              checked={draft.stars_enabled}
+              onChange={(e) => update('stars_enabled', e.target.checked)}
+            />
+            <span className="track" />
+            <span className="knob" />
           </label>
         </div>
         {draft.stars_enabled && (
           <div className="field">
             <label>Stars per 1 {draft.currency_symbol}</label>
-            <input type="number" min="1" step="1" value={draft.stars_rate} onChange={(e) => update('stars_rate', Number(e.target.value))} />
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={draft.stars_rate}
+              onChange={(e) => update('stars_rate', Number(e.target.value))}
+            />
             <p className="muted" style={{ fontSize: 11.5, marginTop: 6 }}>
               Conversion rate. A {draft.currency_symbol}10 product will cost{' '}
-              <b>{starsExample.toLocaleString()} Stars</b>. Check the current
-              Telegram Stars rate regularly and adjust.
+              <b>{starsExample.toLocaleString()} Stars</b>.
             </p>
           </div>
         )}
@@ -138,8 +188,13 @@ export function Settings() {
             </p>
           </div>
           <label className="switch">
-            <input type="checkbox" checked={draft.stripe_enabled} onChange={(e) => update('stripe_enabled', e.target.checked)} />
-            <span className="track" /><span className="knob" />
+            <input
+              type="checkbox"
+              checked={draft.stripe_enabled}
+              onChange={(e) => update('stripe_enabled', e.target.checked)}
+            />
+            <span className="track" />
+            <span className="knob" />
           </label>
         </div>
       </div>
@@ -153,8 +208,13 @@ export function Settings() {
             </p>
           </div>
           <label className="switch">
-            <input type="checkbox" checked={draft.bank_enabled} onChange={(e) => update('bank_enabled', e.target.checked)} />
-            <span className="track" /><span className="knob" />
+            <input
+              type="checkbox"
+              checked={draft.bank_enabled}
+              onChange={(e) => update('bank_enabled', e.target.checked)}
+            />
+            <span className="track" />
+            <span className="knob" />
           </label>
         </div>
         {draft.bank_enabled && (
@@ -173,14 +233,39 @@ export function Settings() {
       <div className="panel">
         <div className="field" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
           <div>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>Cash on Delivery</div>
+            <p className="muted" style={{ fontSize: 11.5 }}>
+              Buyer pays cash when the order arrives. Only useful for physical goods.
+            </p>
+          </div>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={draft.cod_enabled}
+              onChange={(e) => update('cod_enabled', e.target.checked)}
+            />
+            <span className="track" />
+            <span className="knob" />
+          </label>
+        </div>
+      </div>
+
+      <div className="panel">
+        <div className="field" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <div>
             <div style={{ fontWeight: 700, fontSize: 14 }}>Crypto</div>
             <p className="muted" style={{ fontSize: 11.5 }}>
               Buyer sends to one of your wallets and submits a tx hash. Leave an address blank to hide it.
             </p>
           </div>
           <label className="switch">
-            <input type="checkbox" checked={draft.crypto_enabled} onChange={(e) => update('crypto_enabled', e.target.checked)} />
-            <span className="track" /><span className="knob" />
+            <input
+              type="checkbox"
+              checked={draft.crypto_enabled}
+              onChange={(e) => update('crypto_enabled', e.target.checked)}
+            />
+            <span className="track" />
+            <span className="knob" />
           </label>
         </div>
         {draft.crypto_enabled && (
@@ -209,10 +294,25 @@ export function Settings() {
         type="button"
         className="btn-primary"
         disabled={saving === 'payments'}
-        onClick={() => save(
-          ['stars_enabled','stars_rate','stripe_enabled','bank_enabled','bank_details','crypto_enabled','crypto_btc','crypto_eth','crypto_usdt_trc20','crypto_ton'],
-          'payments', 'Payment settings saved',
-        )}
+        onClick={() =>
+          save(
+            [
+              'stars_enabled',
+              'stars_rate',
+              'stripe_enabled',
+              'bank_enabled',
+              'bank_details',
+              'cod_enabled',
+              'crypto_enabled',
+              'crypto_btc',
+              'crypto_eth',
+              'crypto_usdt_trc20',
+              'crypto_ton',
+            ],
+            'payments',
+            'Payment settings saved',
+          )
+        }
       >
         {saving === 'payments' ? 'Saving…' : 'Save payment settings'}
       </button>
@@ -222,8 +322,13 @@ export function Settings() {
         <div className="field" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <label style={{ marginBottom: 0 }}>Show perks on product page</label>
           <label className="switch">
-            <input type="checkbox" checked={draft.perks_enabled} onChange={(e) => update('perks_enabled', e.target.checked)} />
-            <span className="track" /><span className="knob" />
+            <input
+              type="checkbox"
+              checked={draft.perks_enabled}
+              onChange={(e) => update('perks_enabled', e.target.checked)}
+            />
+            <span className="track" />
+            <span className="knob" />
           </label>
         </div>
         {draft.perks_enabled && (
@@ -246,10 +351,13 @@ export function Settings() {
           type="button"
           className="btn-primary"
           disabled={saving === 'perks'}
-          onClick={() => save(
-            ['perks_enabled','perk_1_text','perk_2_text','perk_3_text'],
-            'perks', 'Perks saved',
-          )}
+          onClick={() =>
+            save(
+              ['perks_enabled', 'perk_1_text', 'perk_2_text', 'perk_3_text'],
+              'perks',
+              'Perks saved',
+            )
+          }
         >
           {saving === 'perks' ? 'Saving…' : 'Save perks'}
         </button>
@@ -260,8 +368,13 @@ export function Settings() {
         <div className="field" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <label style={{ marginBottom: 0 }}>Show banner</label>
           <label className="switch">
-            <input type="checkbox" checked={draft.banner_enabled} onChange={(e) => update('banner_enabled', e.target.checked)} />
-            <span className="track" /><span className="knob" />
+            <input
+              type="checkbox"
+              checked={draft.banner_enabled}
+              onChange={(e) => update('banner_enabled', e.target.checked)}
+            />
+            <span className="track" />
+            <span className="knob" />
           </label>
         </div>
         <div className="field"><label>Eyebrow</label><input type="text" value={draft.banner_eyebrow} onChange={(e) => update('banner_eyebrow', e.target.value)} /></div>
@@ -270,7 +383,10 @@ export function Settings() {
         <div className="field"><label>CTA label</label><input type="text" value={draft.banner_cta} onChange={(e) => update('banner_cta', e.target.value)} /></div>
         <div className="field">
           <label>CTA action</label>
-          <select value={draft.banner_cta_action} onChange={(e) => update('banner_cta_action', e.target.value as Draft['banner_cta_action'])}>
+          <select
+            value={draft.banner_cta_action}
+            onChange={(e) => update('banner_cta_action', e.target.value as Draft['banner_cta_action'])}
+          >
             <option value="all">Show all products</option>
             <option value="search">Focus search field</option>
             <option value="category">Show all products (category v2)</option>
@@ -279,11 +395,25 @@ export function Settings() {
         <div className="field">
           <label>Banner color</label>
           <div className="swatches">
-            {(['mint','blue','pink','yellow','neutral'] as const).map((c) => {
-              const bg = c === 'mint' ? '#D1FAE5' : c === 'blue' ? '#E0F2FE' : c === 'pink' ? '#FCE7F3' : c === 'yellow' ? '#FEF3C7' : '#EEEFF1';
+            {(['mint', 'blue', 'pink', 'yellow', 'neutral'] as const).map((c) => {
+              const bg =
+                c === 'mint' ? '#D1FAE5'
+                : c === 'blue' ? '#E0F2FE'
+                : c === 'pink' ? '#FCE7F3'
+                : c === 'yellow' ? '#FEF3C7'
+                : '#EEEFF1';
               return (
-                <label key={c} className={`swatch${draft.banner_color === c ? ' sel' : ''}`} style={{ background: bg }}>
-                  <input type="radio" name="banner-color" checked={draft.banner_color === c} onChange={() => update('banner_color', c)} />
+                <label
+                  key={c}
+                  className={`swatch${draft.banner_color === c ? ' sel' : ''}`}
+                  style={{ background: bg }}
+                >
+                  <input
+                    type="radio"
+                    name="banner-color"
+                    checked={draft.banner_color === c}
+                    onChange={() => update('banner_color', c)}
+                  />
                 </label>
               );
             })}
@@ -306,14 +436,17 @@ export function Settings() {
           type="button"
           className="btn-primary"
           disabled={saving === 'banner'}
-          onClick={() => save(
-            ['banner_enabled','banner_eyebrow','banner_title','banner_subtitle','banner_cta','banner_cta_action','banner_color'],
-            'banner', 'Banner saved',
-          )}
+          onClick={() =>
+            save(
+              ['banner_enabled', 'banner_eyebrow', 'banner_title', 'banner_subtitle', 'banner_cta', 'banner_cta_action', 'banner_color'],
+              'banner',
+              'Banner saved',
+            )
+          }
         >
           {saving === 'banner' ? 'Saving…' : 'Save banner'}
         </button>
       </div>
     </>
   );
-          }
+    }
