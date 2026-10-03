@@ -7,7 +7,6 @@ import {
   type Order,
   type StoreSettings,
 } from '../lib/api';
-import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useRouter } from '../App';
 
@@ -25,7 +24,6 @@ const POLL_MAX_MS = 15 * 60 * 1000;
 
 export function OrderConfirmation({ orderCode }: Props) {
   const { navigate } = useRouter();
-  const auth = useAuth();
   const toast = useToast();
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [note, setNote] = useState('');
@@ -226,12 +224,7 @@ export function OrderConfirmation({ orderCode }: Props) {
                 }}
               >
                 <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>{d.product_name}</div>
-                <a
-                  href={d.signed_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="link-btn"
-                >
+                <a href={d.signed_url} target="_blank" rel="noreferrer" className="link-btn">
                   Download (24h link)
                 </a>
               </div>
@@ -447,4 +440,4 @@ export function OrderConfirmation({ orderCode }: Props) {
       </button>
     </section>
   );
-              }
+            }
