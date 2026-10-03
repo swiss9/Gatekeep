@@ -7,62 +7,24 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const MAX_RECEIPT_BYTES = 8 * 1024 * 1024;
 
-const ALLOWED_DIGITAL_TYPES = [
-  'application/pdf',
-  'application/zip',
-  'application/x-zip-compressed',
-  'application/epub+zip',
-  'application/octet-stream',
-  'audio/mpeg',
-  'audio/wav',
-  'audio/mp4',
-  'video/mp4',
-];
-
 type Bucket = 'products' | 'digital-goods' | 'receipts';
 
 type BucketRule = {
-  /** If true, only image signatures are accepted. Client MIME is ignored. */
   imagesOnly: boolean;
-  /** If true, admin/superadmin role required. */
   adminOnly: boolean;
-  /** If true, the server returns a public URL for the uploaded object. */
   publicUrl: boolean;
   maxBytes: number;
-  /** MIME allowlist — applied only when imagesOnly is false. */
-  allowed: string[];
 };
 
 function ruleFor(bucket: Bucket): BucketRule {
   switch (bucket) {
     case 'products':
-      // Product thumbnails are always images.
-      return {
-        imagesOnly: true,
-        adminOnly: true,
-        publicUrl: true,
-        maxBytes: MAX_IMAGE_BYTES,
-        allowed: [],
-      };
+      return { imagesOnly: true, adminOnly: true, publicUrl: true, maxBytes: MAX_IMAGE_BYTES };
     case 'receipts':
-      // Buyer-supplied proof of payment is images-only.
-      return {
-        imagesOnly: true,
-        adminOnly: false,
-        publicUrl: false,
-        maxBytes: MAX_RECEIPT_BYTES,
-        allowed: [],
-      };
+      return { imagesOnly: true, adminOnly: false, publicUrl: false, maxBytes: MAX_RECEIPT_BYTES };
     case 'digital-goods':
-      // Arbitrary files. We verify content when the client claims a
-      // format with a known signature (PDF, ZIP, MP3, MP4).
-      return {
-        imagesOnly: false,
-        adminOnly: true,
-        publicUrl: false,
-        maxBytes: MAX_FILE_BYTES,
-        allowed: ALLOWED_DIGITAL_TYPES,
-      };
+      // No MIME allowlist — a merchant sells whatever they want.
+      return { imagesOnly: false, adminOnly: true, publicUrl: false, maxBytes: MAX_FILE_BYTES };
   }
 }
 
@@ -89,59 +51,31 @@ export const uploadRoutes: FastifyPluginAsync = async (app) => {
       const bytes = await part.toBuffer();
       if (bytes.length === 0) throw new HttpError(400, 'Empty file');
       if (bytes.length > rule.maxBytes) {
-        throw new HttpError(
-          413,
-          `File too large (max ${Math.round(rule.maxBytes / 1024 / 1024)}MB)`,
-        );
+        throw new HttpError(413, `File too large (max ${Math.round(rule.maxBytes / 1024 / 1024)}MB)`);
       }
 
-      // ---- Content-based MIME verification ----
-      // The client-declared `part.mimetype` is untrusted. We always
-      // derive the canonical MIME from the file's own header bytes.
       let storedMime: string;
       if (rule.imagesOnly) {
         const detected = detectImageMime(bytes);
         if (!detected) {
-          throw new HttpError(
-            400,
-            'Only JPG, PNG, WebP, GIF or HEIC images are accepted here.',
-          );
+          throw new HttpError(400, 'Only JPG, PNG, WebP, GIF or HEIC images are accepted here.');
         }
         storedMime = detected;
       } else {
+        // If we recognize the content signature, use it. Otherwise trust
+        // the client's declared type.
         const detected = detectDocMime(bytes);
-        if (detected) {
-          // We recognize this format — trust its signature over the claim.
-          if (!rule.allowed.includes(detected) && detected !== 'application/zip') {
-            throw new HttpError(400, `Unsupported file type: ${detected}`);
-          }
-          storedMime = detected;
-        } else {
-          // Unknown binary. Accept as generic only if the client did not
-          // claim a signature-bearing format (that would be a lie).
-          const claimed = part.mimetype;
-          if (claimed === 'application/pdf' || claimed === 'application/zip') {
-            throw new HttpError(400, `File content does not match its type (${claimed}).`);
-          }
-          if (!rule.allowed.includes(claimed)) {
-            throw new HttpError(400, `Unsupported file type: ${claimed}`);
-          }
-          storedMime = claimed;
-        }
+        storedMime = detected ?? (part.mimetype || 'application/octet-stream');
       }
 
-      // ---- Path ----
       const ext = (part.filename?.split('.').pop() ?? 'bin')
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, '') || 'bin';
+        .toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin';
       let path: string;
       if (bucket === 'receipts') {
         const fields = part.fields as Record<string, { value?: unknown } | undefined> | undefined;
         const orderIdField = fields?.order_id;
-        const orderId =
-          orderIdField && typeof orderIdField === 'object' && 'value' in orderIdField
-            ? String(orderIdField.value ?? '')
-            : '';
+        const orderId = orderIdField && typeof orderIdField === 'object' && 'value' in orderIdField
+          ? String(orderIdField.value ?? '') : '';
         if (!/^[0-9a-f-]{36}$/i.test(orderId)) {
           throw new HttpError(400, 'order_id field required for receipts');
         }
@@ -152,10 +86,7 @@ export const uploadRoutes: FastifyPluginAsync = async (app) => {
 
       const { error: uploadErr } = await supabaseAdmin.storage
         .from(bucket)
-        .upload(path, bytes, {
-          contentType: storedMime,
-          upsert: bucket === 'receipts',
-        });
+        .upload(path, bytes, { contentType: storedMime, upsert: bucket === 'receipts' });
       if (uploadErr) {
         app.log.error(`[uploads] ${bucket}/${path} failed: ${uploadErr.message}`);
         throw new HttpError(500, 'Upload failed');
