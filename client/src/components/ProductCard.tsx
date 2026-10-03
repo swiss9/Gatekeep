@@ -32,9 +32,6 @@ export function ProductCard({ product, currency, saved, onOpen, onToggleSaved }:
         <div className="p-cat">{product.category_name}</div>
         <div className="p-name">{product.name}</div>
         <div className="p-price">{formatMoney(product.price, currency)}</div>
-        <div className="p-meta">
-          ★ {Number(product.rating).toFixed(1)} · {product.review_count} reviews
-        </div>
       </div>
     </article>
   );
