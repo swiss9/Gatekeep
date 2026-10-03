@@ -26,12 +26,14 @@ type State =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; orders: Order[]; items: OrderItem[]; store: StoreSettings };
 
+type Download = { product_name: string; file_index: number; file_total: number; signed_url: string };
+
 export function Orders() {
   const toast = useToast();
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [filter, setFilter] = useState<Filter>('All');
   const [downloadsFor, setDownloadsFor] = useState<string | null>(null);
-  const [downloads, setDownloads] = useState<Array<{ product_name: string; signed_url: string }> | null>(null);
+  const [downloads, setDownloads] = useState<Download[] | null>(null);
   const [loadingDownloads, setLoadingDownloads] = useState(false);
 
   useEffect(() => {
@@ -122,7 +124,9 @@ export function Orders() {
           const items = itemsByOrder.get(o.id) ?? [];
           const count = items.reduce((n, i) => n + i.quantity, 0);
           const isAwaitingConfirm = o.status === 'Pending payment' && !!o.payment_proof_submitted_at;
-          const canDownload = o.status === 'Delivered';
+          // Downloads available on anything past Pending — paid orders,
+          // including ones that haven't been marked Delivered yet.
+          const canDownload = o.status !== 'Pending payment' && o.status !== 'Cancelled';
           const shown = downloadsFor === o.id ? downloads : null;
 
           return (
@@ -144,9 +148,7 @@ export function Orders() {
               <div className="order-bottom">
                 <span className="order-date">
                   {new Date(o.created_at).toLocaleDateString(undefined, {
-                    month: 'short',
-                    day: 'numeric',
-                    year: 'numeric',
+                    month: 'short', day: 'numeric', year: 'numeric',
                   })}
                 </span>
                 <span className="order-total">{formatMoney(o.total, currency)}</span>
@@ -176,13 +178,22 @@ export function Orders() {
                         marginTop: 8,
                       }}
                     >
-                      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>{d.product_name}</div>
+                      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>
+                        {d.product_name}
+                        {d.file_total > 1 ? ` · ${d.file_index + 1} of ${d.file_total}` : ''}
+                      </div>
                       <a href={d.signed_url} target="_blank" rel="noreferrer" className="link-btn">
                         Download (24h link)
                       </a>
                     </div>
                   ))}
                 </div>
+              )}
+
+              {shown && shown.length === 0 && (
+                <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+                  No downloadable items in this order.
+                </p>
               )}
             </div>
           );
