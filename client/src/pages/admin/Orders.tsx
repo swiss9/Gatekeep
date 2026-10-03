@@ -48,10 +48,14 @@ export function Orders() {
   const [filter, setFilter] = useState<Filter>('All');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [includeStale, setIncludeStale] = useState(false);
 
-  const load = (f: Filter = filter) =>
+  const load = (f: Filter = filter, stale: boolean = includeStale) =>
     Promise.all([
-      api.adminOrders(f === 'All' || f === 'Awaiting confirmation' ? undefined : f),
+      api.adminOrders(
+        f === 'All' || f === 'Awaiting confirmation' ? undefined : f,
+        stale,
+      ),
       api.store(),
     ])
       .then(([o, s]) => {
@@ -62,9 +66,9 @@ export function Orders() {
       .catch((err: unknown) => toast(err instanceof Error ? err.message : 'Load failed'));
 
   useEffect(() => {
-    void load(filter);
+    void load(filter, includeStale);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter]);
+  }, [filter, includeStale]);
 
   const itemsByOrder = useMemo(() => {
     const m = new Map<string, OrderItem[]>();
@@ -132,7 +136,36 @@ export function Orders() {
 
   return (
     <>
-      <div className="admin-tabs" style={{ marginTop: 16 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginTop: 16,
+          padding: '10px 14px',
+          background: 'var(--surface)',
+          border: '1px solid var(--line)',
+          borderRadius: 12,
+        }}
+      >
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 13 }}>Show abandoned orders</div>
+          <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>
+            Pending orders older than 2h with no proof submitted
+          </div>
+        </div>
+        <label className="switch">
+          <input
+            type="checkbox"
+            checked={includeStale}
+            onChange={(e) => setIncludeStale(e.target.checked)}
+          />
+          <span className="track" />
+          <span className="knob" />
+        </label>
+      </div>
+
+      <div className="admin-tabs" style={{ marginTop: 14 }}>
         {FILTERS.map((f) => (
           <button
             key={f}
@@ -166,7 +199,9 @@ export function Orders() {
           <p>
             {filter === 'Awaiting confirmation'
               ? 'Nothing awaiting confirmation.'
-              : 'No orders yet.'}
+              : includeStale
+                ? 'No orders yet.'
+                : 'No orders yet. Toggle "Show abandoned" to see stale pending orders.'}
           </p>
         </div>
       ) : (
@@ -302,10 +337,7 @@ export function Orders() {
 
                       {o.payment_proof_signed_url && (
                         <>
-                          <div
-                            className="muted"
-                            style={{ fontSize: 12, marginBottom: 6 }}
-                          >
+                          <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
                             Receipt image
                           </div>
                           <a
@@ -332,10 +364,7 @@ export function Orders() {
                               }}
                             />
                           </a>
-                          <p
-                            className="muted"
-                            style={{ fontSize: 11, marginTop: 6 }}
-                          >
+                          <p className="muted" style={{ fontSize: 11, marginTop: 6 }}>
                             Tap to open full size · link expires in 30 min
                           </p>
                         </>
