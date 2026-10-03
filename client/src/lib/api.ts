@@ -44,6 +44,7 @@ export type StoreSettings = {
   stars_rate: number;
   bank_enabled: boolean;
   bank_details: string;
+  cod_enabled: boolean;
   crypto_enabled: boolean;
   crypto_btc: string;
   crypto_eth: string;
@@ -184,8 +185,6 @@ export type ProductWriteBody = {
   delivery_type?: DeliveryType;
   digital_file_paths?: string[];
 };
-
-// --- Client-side validation, mirrors server/src/schemas.ts ---
 
 export const VALIDATION = {
   NAME_RE: /^[\p{L}][\p{L}\s'.\-]{1,79}$/u,
@@ -430,11 +429,6 @@ export async function uploadProductImage(file: File): Promise<string> {
   return public_url;
 }
 
-/**
- * Digital file upload — no client-side MIME allowlist. The server
- * verifies content signatures when it recognizes one; otherwise trusts
- * the declared type. The merchant sells whatever they want.
- */
 export async function uploadDigitalFile(file: File): Promise<string> {
   if (file.size > MAX_FILE_BYTES) {
     throw new ApiError(400, `File too large (max ${Math.round(MAX_FILE_BYTES / 1024 / 1024)}MB).`);
