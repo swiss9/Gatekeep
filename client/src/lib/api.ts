@@ -242,8 +242,6 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
       if ('error' in data && typeof (data as { error: unknown }).error === 'string') {
         message = (data as { error: string }).error;
       }
-      // Zod issue details — surface the first one so the toast says
-      // which field failed, not just "Validation failed".
       if ('issues' in data && Array.isArray((data as { issues: unknown }).issues)) {
         const issues = (data as { issues: Array<{ path?: string; message?: string }> }).issues;
         const first = issues[0];
@@ -267,7 +265,10 @@ export const api = {
       auth: false,
     }),
 
-  store: () => request<{ store: StoreSettings }>('/api/store', { auth: false }),
+  store: () =>
+    request<{ store: StoreSettings; support_username: string | null }>('/api/store', {
+      auth: false,
+    }),
 
   categories: () => request<{ categories: Category[] }>('/api/categories', { auth: false }),
 
@@ -372,19 +373,6 @@ const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const MAX_RECEIPT_BYTES = 8 * 1024 * 1024;
 
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-
-const ALLOWED_DIGITAL_TYPES = [
-  'application/pdf',
-  'application/zip',
-  'application/x-zip-compressed',
-  'application/epub+zip',
-  'application/octet-stream',
-  'audio/mpeg',
-  'audio/wav',
-  'audio/mp4',
-  'video/mp4',
-];
-
 const ALLOWED_RECEIPT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic'];
 
 async function uploadViaServer(
@@ -437,12 +425,14 @@ export async function uploadProductImage(file: File): Promise<string> {
   return public_url;
 }
 
+/**
+ * Digital file upload — no client-side MIME allowlist. The server
+ * verifies content signatures when it recognizes one; otherwise trusts
+ * the declared type. The merchant sells whatever they want.
+ */
 export async function uploadDigitalFile(file: File): Promise<string> {
   if (file.size > MAX_FILE_BYTES) {
     throw new ApiError(400, `File too large (max ${Math.round(MAX_FILE_BYTES / 1024 / 1024)}MB).`);
-  }
-  if (file.type && !ALLOWED_DIGITAL_TYPES.includes(file.type)) {
-    throw new ApiError(400, `Unsupported file type: ${file.type}.`);
   }
   const { path } = await uploadViaServer('digital-goods', file);
   return path;
