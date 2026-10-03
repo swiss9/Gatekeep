@@ -9,9 +9,6 @@ import type { Order, OrderItem, Product, StoreSettings } from '../types.js';
 const RATE_LIMIT_PER_HOUR = 5;
 const ORDER_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
-// Methods where the admin has real work on a fresh order. Stars and
-// Stripe confirm themselves. Manual orders are direct-chat — the buyer
-// messages the admin out-of-band, so no notification needed on creation.
 const ADMIN_ACTION_METHODS = new Set(['bank', 'crypto', 'cod']);
 
 function genOrderCode(): string {
@@ -192,7 +189,7 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       stripe: !!settings?.stripe_enabled,
       bank: !!settings?.bank_enabled && !!settings?.bank_details.trim(),
       crypto: !!settings?.crypto_enabled,
-      cod: true,
+      cod: !!settings?.cod_enabled,
       manual: true,
     };
     if (!enabled[method]) throw new HttpError(400, 'That payment method is not available.');
@@ -318,8 +315,6 @@ export const orderRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    // Only ping admins for methods where they actually have work to do.
-    // Stars and Stripe confirm themselves. Manual is direct-chat.
     if (ADMIN_ACTION_METHODS.has(method)) {
       notifyAdminsOfOrder({
         code: order.order_code,
