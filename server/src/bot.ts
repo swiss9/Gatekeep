@@ -13,9 +13,7 @@ type InlineKeyboardButton = {
 };
 
 type ReplyMarkup = {
-  reply_markup: {
-    inline_keyboard: InlineKeyboardButton[][];
-  };
+  reply_markup: { inline_keyboard: InlineKeyboardButton[][] };
 };
 
 type TelegramUpdate = {
@@ -54,30 +52,7 @@ async function sendMessage(
 }
 
 function webAppButton(label: string): ReplyMarkup {
-  return {
-    reply_markup: {
-      inline_keyboard: [[{ text: label, web_app: { url: env.MINI_APP_URL } }]],
-    },
-  };
-}
-
-function urlButton(label: string, url: string): ReplyMarkup {
-  return {
-    reply_markup: {
-      inline_keyboard: [[{ text: label, url }]],
-    },
-  };
-}
-
-function urlAndAppButtons(label: string, url: string, appLabel: string): ReplyMarkup {
-  return {
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: label, url }],
-        [{ text: appLabel, web_app: { url: env.MINI_APP_URL } }],
-      ],
-    },
-  };
+  return { reply_markup: { inline_keyboard: [[{ text: label, web_app: { url: env.MINI_APP_URL } }]] } };
 }
 
 async function loadSettings(): Promise<{ store_name: string; currency_symbol: string }> {
@@ -116,24 +91,17 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
 
     if (!orderId) {
       await callTelegram('answerPreCheckoutQuery', {
-        pre_checkout_query_id: q.id,
-        ok: false,
-        error_message: 'Invalid order reference.',
+        pre_checkout_query_id: q.id, ok: false, error_message: 'Invalid order reference.',
       });
       return;
     }
 
     const { data: order } = await supabaseAdmin
-      .from('orders')
-      .select('id, status')
-      .eq('id', orderId)
-      .maybeSingle();
+      .from('orders').select('id, status').eq('id', orderId).maybeSingle();
 
     if (!order || order.status !== 'Pending payment') {
       await callTelegram('answerPreCheckoutQuery', {
-        pre_checkout_query_id: q.id,
-        ok: false,
-        error_message: 'This order is no longer payable.',
+        pre_checkout_query_id: q.id, ok: false, error_message: 'This order is no longer payable.',
       });
       return;
     }
@@ -142,13 +110,9 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
   }
 }
 
-async function markOrderPaidFromStars(
-  invoicePayload: string,
-  chargeId: string,
-): Promise<void> {
+async function markOrderPaidFromStars(invoicePayload: string, chargeId: string): Promise<void> {
   const orderId = invoicePayload.startsWith('order:')
-    ? invoicePayload.slice('order:'.length)
-    : null;
+    ? invoicePayload.slice('order:'.length) : null;
   if (!orderId) return;
 
   const now = new Date().toISOString();
@@ -172,10 +136,7 @@ async function markOrderPaidFromStars(
 
   if (updated.user_id) {
     const { data: profile } = await supabaseAdmin
-      .from('profiles')
-      .select('telegram_id')
-      .eq('id', updated.user_id)
-      .maybeSingle();
+      .from('profiles').select('telegram_id').eq('id', updated.user_id).maybeSingle();
     if (profile?.telegram_id) {
       await notifyBuyerPaymentConfirmed({
         telegramId: Number(profile.telegram_id),
@@ -224,9 +185,7 @@ export function startBot(): void {
   void pollLoop();
 }
 
-export function stopBot(): void {
-  running = false;
-}
+export function stopBot(): void { running = false; }
 
 export async function createStarsInvoiceLink(params: {
   title: string;
@@ -261,9 +220,7 @@ export async function notifyAdminsOfOrder(order: {
   payment_method: string;
 }): Promise<void> {
   const { data: admins } = await supabaseAdmin
-    .from('profiles')
-    .select('telegram_id')
-    .in('role', ['admin', 'superadmin']);
+    .from('profiles').select('telegram_id').in('role', ['admin', 'superadmin']);
   if (!admins || admins.length === 0) return;
 
   const { currency_symbol } = await loadSettings();
@@ -311,35 +268,34 @@ export async function notifyBuyerPaymentConfirmed(params: {
 }
 
 /**
- * Sends a download link for one digital item, plus an "open in app"
- * button so the buyer can re-download anytime. The URL is a fresh
- * 24h signed link — after that window the buyer reopens the app and
- * gets a new one from /api/orders/:id/downloads.
+ * Sends one Telegram message per digital product, with a download button
+ * per file plus an "Open in App" button. Each URL is a fresh 24h signed
+ * link. After that window the buyer reopens the app to get new ones.
  */
-export async function deliverDigitalGood(params: {
+export async function deliverDigitalProduct(params: {
   telegramId: number;
   orderCode: string;
-  orderId: string;
   productName: string;
-  filePath: string;
+  files: Array<{ label: string; url: string }>;
 }): Promise<boolean> {
-  const { data, error } = await supabaseAdmin.storage
-    .from('digital-goods')
-    .createSignedUrl(params.filePath, 60 * 60 * 24);
+  if (params.files.length === 0) return false;
 
-  if (error || !data?.signedUrl) {
-    console.error('[bot] signed url failed:', error);
-    return false;
-  }
+  const rows: InlineKeyboardButton[][] = params.files.map((f) => [
+    { text: f.label.slice(0, 60), url: f.url },
+  ]);
+  rows.push([{ text: 'Open in App', web_app: { url: env.MINI_APP_URL } }]);
 
-  const text = `<b>Your download is ready</b>\n\n${params.productName}\nOrder #${params.orderCode}\n\nLink expires in 24 hours. You can always get a fresh link from the app.`;
+  const count = params.files.length;
+  const tail =
+    count === 1
+      ? 'Link expires in 24 hours.'
+      : `${count} files. Links expire in 24 hours.`;
+  const text = `<b>Your download is ready</b>\n\n${params.productName}\nOrder #${params.orderCode}\n\n${tail} You can always get fresh links from the app.`;
 
   try {
-    await sendMessage(
-      params.telegramId,
-      text,
-      urlAndAppButtons('Download', data.signedUrl, 'Open in App'),
-    );
+    await sendMessage(params.telegramId, text, {
+      reply_markup: { inline_keyboard: rows },
+    });
     return true;
   } catch (err) {
     console.error('[bot] digital delivery failed:', err);
@@ -352,9 +308,7 @@ export async function broadcastNewProduct(product: {
   price: number;
 }): Promise<void> {
   const { data: orders } = await supabaseAdmin
-    .from('orders')
-    .select('user_id')
-    .not('user_id', 'is', null);
+    .from('orders').select('user_id').not('user_id', 'is', null);
 
   const uniqueIds = [
     ...new Set(
@@ -363,16 +317,13 @@ export async function broadcastNewProduct(product: {
         .filter((id): id is string => id !== null),
     ),
   ];
-
   if (uniqueIds.length === 0) {
     console.log('[bot] broadcast skipped: no buyers yet');
     return;
   }
 
   const { data: profiles } = await supabaseAdmin
-    .from('profiles')
-    .select('telegram_id')
-    .in('id', uniqueIds);
+    .from('profiles').select('telegram_id').in('id', uniqueIds);
   if (!profiles || profiles.length === 0) return;
 
   const { store_name, currency_symbol } = await loadSettings();
