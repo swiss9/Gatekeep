@@ -15,7 +15,15 @@ export function Settings() {
       .then((s) => {
         const { id: _id, updated_at: _u, ...rest } = s.store;
         void _id; void _u;
-        setDraft(rest);
+        // PostgREST returns numeric columns as strings. Coerce on load so
+        // the internal Draft matches its TypeScript type and any later
+        // arithmetic / equality check behaves.
+        setDraft({
+          ...rest,
+          shipping_threshold: Number(rest.shipping_threshold),
+          shipping_cost: Number(rest.shipping_cost),
+          stars_rate: Number(rest.stars_rate),
+        });
       })
       .catch((err: unknown) => toast(err instanceof Error ? err.message : 'Load failed'));
   }, [toast]);
@@ -30,7 +38,12 @@ export function Settings() {
       const { store } = await api.updateSettings(patch);
       const { id: _id, updated_at: _u, ...rest } = store;
       void _id; void _u;
-      setDraft(rest);
+      setDraft({
+        ...rest,
+        shipping_threshold: Number(rest.shipping_threshold),
+        shipping_cost: Number(rest.shipping_cost),
+        stars_rate: Number(rest.stars_rate),
+      });
       toast(okMsg);
     } catch (err) { toast(err instanceof Error ? err.message : 'Save failed'); }
     finally { setSaving(null); }
@@ -303,4 +316,4 @@ export function Settings() {
       </div>
     </>
   );
-    }
+          }
