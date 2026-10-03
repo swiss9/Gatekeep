@@ -1,5 +1,6 @@
 import { supabaseAdmin } from './supabase.js';
 import { env } from './env.js';
+import type { Order, OrderItem, Product } from './types.js';
 
 const BOT_API = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}`;
 
@@ -110,9 +111,101 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
   }
 }
 
+/**
+ * Post-Paid-transition work. Fetches the order's line items, signs every
+ * digital file path, and sends one Telegram message per digital product
+ * with a download button per file.
+ *
+ * Also returns whether the order contains only non-shippable items —
+ * callers use this to auto-flip the order to Delivered.
+ *
+ * Idempotent: safe to call twice; the buyer just gets a fresh set of
+ * signed links.
+ */
+export async function finalizeDigitalDelivery(order: {
+  id: string;
+  order_code: string;
+  user_id: string | null;
+}): Promise<{ noShipping: boolean; delivered: boolean }> {
+  const { data: items } = await supabaseAdmin
+    .from('order_items')
+    .select('*')
+    .eq('order_id', order.id);
+  const rows = (items as OrderItem[]) ?? [];
+
+  if (rows.length === 0) {
+    return { noShipping: false, delivered: false };
+  }
+
+  const productIds = rows.map((r) => r.product_id).filter((x): x is string => !!x);
+  const { data: products } = productIds.length
+    ? await supabaseAdmin.from('products').select('*').in('id', productIds)
+    : { data: [] as Product[] };
+  const byId = new Map(((products as Product[]) ?? []).map((p) => [p.id, p]));
+
+  // "No shipping" means: every line item is either digital or a service
+  // ('none'). Anything physical (or unknown, e.g. deleted product)
+  // forces manual fulfilment.
+  let noShipping = true;
+  for (const line of rows) {
+    if (!line.product_id) { noShipping = false; break; }
+    const p = byId.get(line.product_id);
+    if (!p) { noShipping = false; break; }
+    if (p.delivery_type === 'physical') { noShipping = false; break; }
+  }
+
+  // Send files to the buyer.
+  let delivered = false;
+  if (order.user_id) {
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .select('telegram_id')
+      .eq('id', order.user_id)
+      .maybeSingle();
+    const tg = profile?.telegram_id ? Number(profile.telegram_id) : null;
+
+    if (tg) {
+      for (const line of rows) {
+        if (!line.product_id) continue;
+        const p = byId.get(line.product_id);
+        if (!p || p.delivery_type !== 'digital') continue;
+        const paths = p.digital_file_paths ?? [];
+        if (paths.length === 0) continue;
+
+        const files: Array<{ label: string; url: string }> = [];
+        for (let i = 0; i < paths.length; i++) {
+          const path = paths[i];
+          if (!path) continue;
+          const { data } = await supabaseAdmin.storage
+            .from('digital-goods')
+            .createSignedUrl(path, 60 * 60 * 24);
+          if (!data?.signedUrl) continue;
+          files.push({
+            label: paths.length === 1 ? 'Download' : `Download ${i + 1} / ${paths.length}`,
+            url: data.signedUrl,
+          });
+        }
+
+        if (files.length > 0) {
+          const ok = await deliverDigitalProduct({
+            telegramId: tg,
+            orderCode: order.order_code,
+            productName: p.name,
+            files,
+          });
+          if (ok) delivered = true;
+        }
+      }
+    }
+  }
+
+  return { noShipping, delivered };
+}
+
 async function markOrderPaidFromStars(invoicePayload: string, chargeId: string): Promise<void> {
   const orderId = invoicePayload.startsWith('order:')
-    ? invoicePayload.slice('order:'.length) : null;
+    ? invoicePayload.slice('order:'.length)
+    : null;
   if (!orderId) return;
 
   const now = new Date().toISOString();
@@ -134,6 +227,9 @@ async function markOrderPaidFromStars(invoicePayload: string, chargeId: string):
     return;
   }
 
+  // Notify buyer first, then deliver files. Both fire in quick succession
+  // — the buyer sees "Payment confirmed" followed by "Your download is
+  // ready" a moment later.
   if (updated.user_id) {
     const { data: profile } = await supabaseAdmin
       .from('profiles').select('telegram_id').eq('id', updated.user_id).maybeSingle();
@@ -143,6 +239,18 @@ async function markOrderPaidFromStars(invoicePayload: string, chargeId: string):
         orderCode: updated.order_code,
       });
     }
+  }
+
+  const { noShipping } = await finalizeDigitalDelivery(updated);
+
+  // If there's nothing to physically ship, the order is done the moment
+  // it's paid. Flip to Delivered so admin doesn't have a leftover Paid
+  // order sitting in their queue.
+  if (noShipping) {
+    await supabaseAdmin
+      .from('orders')
+      .update({ status: 'Delivered', delivered_at: new Date().toISOString() })
+      .eq('id', updated.id);
   }
 
   console.log(`[bot] order ${updated.order_code} marked paid via Stars`);
@@ -259,7 +367,7 @@ export async function notifyBuyerPaymentConfirmed(params: {
   try {
     await sendMessage(
       params.telegramId,
-      `<b>Payment confirmed</b>\n\nOrder #${params.orderCode} is paid. We'll message you again when it ships or when your digital download is ready.`,
+      `<b>Payment confirmed</b>\n\nOrder #${params.orderCode} is paid. Digital downloads arrive in a moment; physical items ship shortly.`,
       webAppButton('View order'),
     );
   } catch (err) {
@@ -341,3 +449,6 @@ export async function broadcastNewProduct(product: {
   }
   console.log(`[bot] broadcast sent to ${sent}/${profiles.length} buyers`);
 }
+
+// Keep the Order type referenced so the import survives tree shaking.
+void (undefined as unknown as Order);
